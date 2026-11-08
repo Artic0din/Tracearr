@@ -123,6 +123,37 @@ describe('SiloClient', () => {
     expect(mockFetchJson).toHaveBeenCalledTimes(2);
   });
 
+  it('lists only items added since the last sync for incremental runs', async () => {
+    const since = new Date('2026-11-01T00:00:00.000Z');
+    const after = 'added_after=2026-11-01T00%3A00%3A00.000Z&limit=200';
+    respond({
+      [`/admin/catalog/items?library_id=2&type=series&${after}`]: { items: [], page: {} },
+      [`/admin/catalog/items?library_id=2&type=episode&${after}`]: {
+        items: [
+          {
+            content_id: 'ep-9',
+            type: 'episode',
+            title: 'New',
+            added_at: '2026-11-05T00:00:00Z',
+            versions: [],
+          },
+        ],
+        page: {},
+      },
+    });
+    const client = new SiloClient({ url: URL, token: 'k' });
+
+    await expect(
+      client.getLibraryItemsSince('2', since, { libraryType: 'tvshows' })
+    ).resolves.toEqual({
+      items: [],
+      totalCount: 0,
+    });
+    const leaves = await client.getLibraryLeavesSince('2', since);
+    expect(leaves.totalCount).toBe(1);
+    expect(leaves.items[0]?.ratingKey).toBe('ep-9');
+  });
+
   it('retries a library listing that failed earlier in the run', async () => {
     const path = '/admin/catalog/items?library_id=1&type=movie&limit=200';
     respond({ [path]: httpError(503) });
