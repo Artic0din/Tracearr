@@ -2398,7 +2398,7 @@ export class LibrarySyncService {
   private async getServer(serverId: string): Promise<{
     id: string;
     name: string;
-    type: 'plex' | 'jellyfin' | 'emby';
+    type: 'plex' | 'jellyfin' | 'emby' | 'silo';
     url: string;
     token: string;
   } | null> {

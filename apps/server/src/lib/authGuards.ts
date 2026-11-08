@@ -250,7 +250,7 @@ export const openToMemberSignIn = sql`(
   )
 )`;
 
-export async function hasOpenServer(type: 'plex' | 'jellyfin' | 'emby'): Promise<boolean> {
+export async function hasOpenServer(type: 'plex' | 'jellyfin' | 'emby' | 'silo'): Promise<boolean> {
   const [server] = await db
     .select({ id: servers.id })
     .from(servers)

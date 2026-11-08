@@ -66,11 +66,14 @@ export const setupRoutes: FastifyPluginAsync = async (app) => {
             )
             .orderBy(servers.displayOrder)
         : [];
+    // Silo has no member sign-in yet.
     const memberLoginServers = await Promise.all(
-      loginServers.map(async ({ url, ...server }) => ({
-        ...server,
-        quickConnect: server.type === 'jellyfin' && (await quickConnectEnabled(url)),
-      }))
+      loginServers
+        .filter((server) => server.type !== 'silo')
+        .map(async ({ url, ...server }) => ({
+          ...server,
+          quickConnect: server.type === 'jellyfin' && (await quickConnectEnabled(url)),
+        }))
     );
 
     return {

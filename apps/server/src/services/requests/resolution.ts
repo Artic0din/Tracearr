@@ -100,7 +100,7 @@ async function byRatingKey(serverId: string, keys: string[]): Promise<Map<string
 
 async function requesters(
   serverId: string,
-  serverType: 'plex' | 'jellyfin' | 'emby',
+  serverType: 'plex' | 'jellyfin' | 'emby' | 'silo',
   keys: string[]
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -116,7 +116,7 @@ async function requesters(
 
 export async function resolveRequests(
   serverId: string,
-  serverType: 'plex' | 'jellyfin' | 'emby',
+  serverType: 'plex' | 'jellyfin' | 'emby' | 'silo',
   rows: ResolutionInput[]
 ): Promise<Map<number, Resolved>> {
   const movies = rows.filter((r) => r.mediaType === 'movie');

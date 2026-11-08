@@ -162,7 +162,7 @@ export function ServerRow({
             )}
             {ownerLink && <OwnerAccountLine server={server} link={ownerLink} />}
 
-            {server.type !== 'plex' && !historical && (
+            {(server.type === 'jellyfin' || server.type === 'emby') && !historical && (
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 {!connectionStatus ? (
                   <span className="text-muted-foreground">{t('servers.checkingConnection')}</span>
@@ -246,7 +246,7 @@ export function ServerRow({
         </Item>
       </TooltipProvider>
 
-      {server.type !== 'plex' && realtimeDialog && (
+      {(server.type === 'jellyfin' || server.type === 'emby') && realtimeDialog && (
         <RealtimeSetupDialog
           server={server}
           open

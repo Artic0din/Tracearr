@@ -40,6 +40,8 @@ function getIconPath(type: ServerType): string | null {
       return `${base}images/servers/jellyfin.png`;
     case 'emby':
       return `${base}images/servers/emby.png`;
+    case 'silo':
+      return `${base}images/servers/silo.png`;
     default:
       return null;
   }

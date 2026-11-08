@@ -14,7 +14,7 @@ import {
 
 interface DuplicateCleanupServer {
   id: string;
-  type: 'plex' | 'jellyfin' | 'emby';
+  type: 'plex' | 'jellyfin' | 'emby' | 'silo';
   /** servers.created_at: nothing before it was tracked */
   cutoff: Date;
 }

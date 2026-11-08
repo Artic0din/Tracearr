@@ -11,7 +11,7 @@ import type { MediaQuality } from '../automations/types.js';
 export interface ServerEventPayload {
   serverName: string;
   serverId: string;
-  serverType?: 'plex' | 'jellyfin' | 'emby';
+  serverType?: 'plex' | 'jellyfin' | 'emby' | 'silo';
 }
 
 /** One library item, flat, with `to` holding the quality it ends the sync at. */

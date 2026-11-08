@@ -51,7 +51,11 @@ vi.mock('@/components/settings/servers/ServerRow', () => ({
   },
 }));
 
-const { connectJellyfinWithApiKey } = vi.hoisted(() => ({ connectJellyfinWithApiKey: vi.fn() }));
+const { connectJellyfinWithApiKey, connectEmbyWithApiKey, createServer } = vi.hoisted(() => ({
+  connectJellyfinWithApiKey: vi.fn(),
+  connectEmbyWithApiKey: vi.fn(),
+  createServer: vi.fn(),
+}));
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -61,15 +65,16 @@ vi.mock('@/lib/api', () => ({
       addPlexServer: vi.fn(),
       testPlexConnection: vi.fn(),
       connectJellyfinWithApiKey,
-      connectEmbyWithApiKey: vi.fn(),
+      connectEmbyWithApiKey,
     },
+    servers: { create: createServer },
   },
 }));
 
 vi.mock('@/components/settings/servers/AddServerDialog', () => ({
   AddServerDialog: (props: {
     open: boolean;
-    onServerTypeChange: (type: 'jellyfin') => void;
+    onServerTypeChange: (type: 'jellyfin' | 'silo') => void;
     onServerUrlChange: (value: string) => void;
     onServerNameChange: (value: string) => void;
     onApiKeyChange: (value: string) => void;
@@ -88,6 +93,16 @@ vi.mock('@/components/settings/servers/AddServerDialog', () => ({
           }}
         >
           fill jellyfin
+        </button>
+        <button
+          onClick={() => {
+            props.onServerTypeChange('silo');
+            props.onServerUrlChange('http://192.168.1.71:8091');
+            props.onServerNameChange('Silo');
+            props.onApiKeyChange('sa_key');
+          }}
+        >
+          fill silo
         </button>
         <button onClick={props.onConnect}>connect</button>
       </div>
@@ -290,5 +305,25 @@ describe('Connections', () => {
         publicUrl: 'jellyfin.example.com',
       })
     );
+  });
+
+  it('adds a Silo server through the servers route, not a Jellyfin or Emby connect', async () => {
+    createServer.mockResolvedValue({});
+    render(<Connections />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'servers.addServer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'fill silo' }));
+    await userEvent.click(screen.getByRole('button', { name: 'connect' }));
+
+    await waitFor(() =>
+      expect(createServer).toHaveBeenCalledWith({
+        type: 'silo',
+        name: 'Silo',
+        url: 'http://192.168.1.71:8091',
+        token: 'sa_key',
+      })
+    );
+    expect(connectEmbyWithApiKey).not.toHaveBeenCalled();
+    expect(connectJellyfinWithApiKey).not.toHaveBeenCalled();
   });
 });

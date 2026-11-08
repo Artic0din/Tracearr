@@ -74,7 +74,7 @@ export interface CompositeSessionIdentity {
 
 /** Input for building a session cache/tracking key. */
 export interface BuildCompositeKeyInput {
-  serverType: 'plex' | 'jellyfin' | 'emby';
+  serverType: 'plex' | 'jellyfin' | 'emby' | 'silo';
   serverId: string;
   externalUserId: string;
   deviceId: string | null;
@@ -287,7 +287,7 @@ export interface PendingSessionData {
   /** Processed session data from media server */
   processed: ProcessedSession;
   /** Server info */
-  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' };
+  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' | 'silo' };
   /** Server user info (matches SessionCreationInput.serverUser) */
   serverUser: {
     id: string;
@@ -355,7 +355,7 @@ export interface SessionCreationInput {
   /** Processed session data from media server */
   processed: ProcessedSession;
   /** Server info */
-  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' };
+  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' | 'silo' };
   /** Server user info */
   serverUser: {
     id: string;
@@ -435,7 +435,7 @@ export interface ResolvePendingSessionInput {
   cacheService: CacheService;
   pubSubService: PubSubService | null;
   /** Server info */
-  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' };
+  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' | 'silo' };
   /** Redis key for the pending session lookup (sessionKey for Plex, composite key otherwise) */
   pendingKey: string;
   /** Processed session data from media server */
@@ -503,7 +503,7 @@ export interface MediaChangeInput {
   /** New media data from the poll */
   processed: ProcessedSession;
   /** Server info */
-  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' };
+  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' | 'silo' };
   /** Server user info */
   serverUser: {
     id: string;

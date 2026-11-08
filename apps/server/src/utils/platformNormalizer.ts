@@ -39,7 +39,7 @@ export interface NormalizedClient {
 export function normalizeClient(
   client: string,
   deviceType?: string,
-  _serverType?: 'plex' | 'jellyfin' | 'emby'
+  _serverType?: 'plex' | 'jellyfin' | 'emby' | 'silo'
 ): NormalizedClient {
   // If deviceType is provided and meaningful, use it as device but still normalize platform
   const hasValidDeviceType = deviceType && deviceType.length > 0 && deviceType !== 'Unknown';

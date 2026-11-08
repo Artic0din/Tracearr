@@ -94,7 +94,7 @@ export function readinessChecks(input: {
   const user = domainOf(input.destination?.config?.['username']);
   const recipients = recipientsState(input.recipients.empty, input.recipients.view);
   const privateServers: ReadinessCheck[] = input.servers
-    .filter((s) => s.type !== 'plex' && memberFacingUrl(s) === null)
+    .filter((s) => (s.type === 'jellyfin' || s.type === 'emby') && memberFacingUrl(s) === null)
     .map((s) => ({
       id: 'privateServer',
       status: 'warn',

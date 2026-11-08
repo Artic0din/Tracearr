@@ -229,10 +229,12 @@ export class SSEManager extends EventEmitter {
   async addServer(
     serverId: string,
     serverName: string,
-    serverType: 'plex' | 'jellyfin' | 'emby',
+    serverType: 'plex' | 'jellyfin' | 'emby' | 'silo',
     url: string,
     token: string
   ): Promise<void> {
+    // Silo has no event stream: leaving it untracked keeps it in fallback, so the poller covers it.
+    if (serverType === 'silo') return;
     if (this.pendingOperations.has(serverId)) {
       console.log(`[SSEManager] Operation already in progress for ${serverName}, skipping`);
       return;
@@ -531,7 +533,7 @@ export class SSEManager extends EventEmitter {
   private buildConnectionStatus(
     serverId: string,
     serverName: string,
-    serverType: 'plex' | 'jellyfin' | 'emby',
+    serverType: 'plex' | 'jellyfin' | 'emby' | 'silo',
     status: SSEConnectionStatus
   ): ServerConnectionStatus {
     const state = status.state;

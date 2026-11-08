@@ -37,8 +37,8 @@ export interface AddServerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isOwner: boolean;
-  serverType: 'plex' | 'jellyfin' | 'emby';
-  onServerTypeChange: (type: 'plex' | 'jellyfin' | 'emby') => void;
+  serverType: 'plex' | 'jellyfin' | 'emby' | 'silo';
+  onServerTypeChange: (type: 'plex' | 'jellyfin' | 'emby' | 'silo') => void;
   serverUrl: string;
   onServerUrlChange: (value: string) => void;
   publicUrl: string;
@@ -143,7 +143,7 @@ export function AddServerDialog({
             <FieldLabel htmlFor="server-type">{t('servers.serverType')}</FieldLabel>
             <Select
               value={serverType}
-              onValueChange={(v) => onServerTypeChange(v as 'plex' | 'jellyfin' | 'emby')}
+              onValueChange={(v) => onServerTypeChange(v as 'plex' | 'jellyfin' | 'emby' | 'silo')}
             >
               <SelectTrigger id="server-type" className="w-full">
                 <SelectValue />
@@ -152,6 +152,7 @@ export function AddServerDialog({
                 {isOwner && <SelectItem value="plex">Plex</SelectItem>}
                 <SelectItem value="jellyfin">Jellyfin</SelectItem>
                 <SelectItem value="emby">Emby</SelectItem>
+                {isOwner && <SelectItem value="silo">Silo</SelectItem>}
               </SelectContent>
             </Select>
           </Field>
@@ -249,7 +250,9 @@ export function AddServerDialog({
                 <FieldDescription>
                   {serverType === 'jellyfin'
                     ? t('servers.serverUrlHelpJellyfin')
-                    : t('servers.serverUrlHelpEmby')}
+                    : serverType === 'silo'
+                      ? t('servers.serverUrlHelpSilo')
+                      : t('servers.serverUrlHelpEmby')}
                 </FieldDescription>
               </Field>
 
@@ -286,7 +289,9 @@ export function AddServerDialog({
                 <FieldDescription>
                   {serverType === 'jellyfin'
                     ? t('servers.apiKeyHelpJellyfin')
-                    : t('servers.apiKeyHelpEmby')}
+                    : serverType === 'silo'
+                      ? t('servers.apiKeyHelpSilo')
+                      : t('servers.apiKeyHelpEmby')}
                 </FieldDescription>
               </Field>
 

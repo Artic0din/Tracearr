@@ -85,6 +85,17 @@ describe('syncServer revocation', () => {
     expect(clearScope).toHaveBeenCalledExactlyOnceWith('u-back');
   });
 
+  it('syncs the users of a Silo server', async () => {
+    mockLimit.mockResolvedValue([{ ...SERVER, type: 'silo' }]);
+    vi.mocked(syncUserFromMediaServer).mockResolvedValue(synced('su-1', false));
+    mockReturning.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    await syncServer('srv-1', { syncUsers: true, syncLibraries: false });
+
+    expect(mockGetUsers).toHaveBeenCalledOnce();
+    expect(syncUserFromMediaServer).toHaveBeenCalledTimes(2);
+  });
+
   it('reports a failed user write as a sync error instead of rejecting', async () => {
     vi.mocked(syncUserFromMediaServer).mockResolvedValue(synced('su-1', false));
     mockReturning.mockRejectedValueOnce(new Error('connection terminated'));

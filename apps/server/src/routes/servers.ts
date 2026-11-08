@@ -20,7 +20,12 @@ import { db } from '../db/client.js';
 import { servers, plexAccounts, serverUsers, users } from '../db/schema.js';
 import { nonOwnerMayLoginThrough } from '../lib/authGuards.js';
 import { revokeUnlessStillIn } from '../lib/revoke.js';
-import { PlexClient, JellyfinClient, EmbyClient } from '../services/mediaServer/index.js';
+import {
+  PlexClient,
+  JellyfinClient,
+  EmbyClient,
+  SiloClient,
+} from '../services/mediaServer/index.js';
 import { getServerLiveStats, getServerResourceStats } from '../services/serverLiveStats.js';
 import { syncServer } from '../services/sync.js';
 import { sseManager } from '../services/sseManager.js';
@@ -38,6 +43,7 @@ import { serverOrderBy } from '../utils/serverOrder.js';
 function verifyServerAdmin(type: ServerType, token: string, url: string) {
   if (type === 'plex') return PlexClient.verifyServerAdmin(token, url);
   if (type === 'jellyfin') return JellyfinClient.verifyServerAdmin(token, url);
+  if (type === 'silo') return SiloClient.verifyServerAdmin(token, url);
   return EmbyClient.verifyServerAdmin(token, url);
 }
 

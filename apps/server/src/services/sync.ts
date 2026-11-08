@@ -295,12 +295,12 @@ async function syncPlexUsers(
 }
 
 /**
- * Sync users from Jellyfin or Emby server to local database
- * Both use the same IMediaServerClient interface via createMediaServerClient
+ * Sync users from a Jellyfin, Emby or Silo server to local database
+ * All use the same IMediaServerClient interface via createMediaServerClient
  */
 async function syncMediaServerUsers(
   serverId: string,
-  serverType: 'jellyfin' | 'emby',
+  serverType: 'jellyfin' | 'emby' | 'silo',
   serverUrl: string,
   token: string
 ): Promise<{
@@ -395,7 +395,7 @@ export async function syncServer(
       result.usersRemoved = userResult.removed;
       result.usersRestored = userResult.restored;
       result.errors.push(...userResult.errors);
-    } else if (server.type === 'jellyfin' || server.type === 'emby') {
+    } else {
       const userResult = await syncMediaServerUsers(serverId, server.type, serverUrl, server.token);
       result.usersAdded = userResult.added;
       result.usersUpdated = userResult.updated;
