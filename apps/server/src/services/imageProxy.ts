@@ -504,12 +504,14 @@ async function runMissPipeline(args: MissPipelineArgs): Promise<ProxyResult> {
   try {
     // Inside the try so a blocked path degrades to the fallback image like any
     // other upstream failure, instead of escaping as a 500.
-    const candidates = resizedOnly
-      ? [buildUpstreamRequest(server, imagePath, { width, height })]
-      : [
-          buildUpstreamRequest(server, imagePath, { width, height }),
-          buildUpstreamRequest(server, imagePath),
-        ];
+    // Silo's resized and original requests are the same signed link.
+    const candidates =
+      resizedOnly || server.type === 'silo'
+        ? [buildUpstreamRequest(server, imagePath, { width, height })]
+        : [
+            buildUpstreamRequest(server, imagePath, { width, height }),
+            buildUpstreamRequest(server, imagePath),
+          ];
     let imageBuffer: Buffer | null = null;
     let lastError: unknown = null;
     for (const { imageUrl, headers } of candidates) {

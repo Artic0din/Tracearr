@@ -256,6 +256,29 @@ describe('proxyImage cache-miss pipeline', () => {
     expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
   });
 
+  it('asks a Silo server once for an expired poster, since both requests share one signed link', async () => {
+    mockSelectChain([
+      {
+        id: 'server-s',
+        type: 'silo',
+        url: 'http://silo.local:8091',
+        token: 'sa_key',
+        historicalAt: null,
+      },
+    ]);
+    fetchSpy.mockResolvedValue(new Response('expired', { status: 403 }));
+
+    const result = await proxyImage({
+      serverId: randomUUID(),
+      imagePath: '/api/v2/artwork/tmdb/movies/1/poster/w300.webp?exp=1&sig=abc',
+      width: 240,
+      height: 360,
+    });
+
+    expect(result.contentType).toBe('image/svg+xml');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
   it('writes atomically: tmp path named after the pid, written before the rename into place', async () => {
     mockSelectChain([
       { id: 'server-1', type: 'plex', url: 'http://localhost:32400', token: 'token' },
