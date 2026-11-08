@@ -57,7 +57,7 @@ import {
 } from '@tracearr/shared';
 
 // Server types enum
-export const serverTypeEnum = ['plex', 'jellyfin', 'emby'] as const;
+export const serverTypeEnum = ['plex', 'jellyfin', 'emby', 'silo'] as const;
 
 // Session state enum
 export const sessionStateEnum = ['playing', 'paused', 'stopped'] as const;

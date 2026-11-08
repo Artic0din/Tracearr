@@ -55,7 +55,7 @@ export interface RequestService {
 export interface RequestServiceProbeResult {
   applicationTitle: string;
   version: string;
-  mediaServerType: 'plex' | 'jellyfin' | 'emby';
+  mediaServerType: 'plex' | 'jellyfin' | 'emby' | 'silo';
   remoteServerId: string;
   matchedServerId: string | null;
 }

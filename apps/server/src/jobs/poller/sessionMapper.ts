@@ -155,7 +155,7 @@ export function pickLiveSessionFields(processed: ProcessedSession): Partial<Sess
  */
 export function mapMediaSession(
   session: MediaSession,
-  serverType: 'plex' | 'jellyfin' | 'emby'
+  serverType: 'plex' | 'jellyfin' | 'emby' | 'silo'
 ): ProcessedSession {
   // Resolve thumb path using lookup table
   const thumbPath = resolveThumbPath(session);

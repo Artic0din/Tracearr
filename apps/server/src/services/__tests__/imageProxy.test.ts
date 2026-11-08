@@ -706,6 +706,27 @@ describe('buildUpstreamRequest', () => {
     expect(headers['X-Emby-Token']).toBe('tok123');
   });
 
+  it('silo fetches the signed artwork link as given, without the key or resize params', () => {
+    const server = { ...baseServer, type: 'silo' } as never;
+    const path =
+      '/api/v2/artwork/tmdb/movies/10030/poster/w300.7f9a5fef.webp?exp=1794196800&sig=AbC123xyz';
+    const { imageUrl, headers } = buildUpstreamRequest(server, path, { width: 240, height: 360 });
+    expect(imageUrl).toBe(`http://media:1234${path}`);
+    expect(Object.values(headers).join(' ')).not.toContain('tok123');
+  });
+
+  it('silo refuses a path outside the artwork route or one that walks out of it', () => {
+    const server = { ...baseServer, type: 'silo' } as never;
+    for (const path of [
+      '/api/v2/admin/users?exp=1&sig=x',
+      '/api/v2/artwork/../admin/users?exp=1&sig=x',
+      '/api/v2/artwork/a.webp',
+      '/api/v2/artwork/a.webp?exp=1&sig=x&cursor=1',
+    ]) {
+      expect(() => buildUpstreamRequest(server, path)).toThrow(SsrfBlockedError);
+    }
+  });
+
   it('preserves an existing query string when appending resize params', () => {
     const server = { ...baseServer, type: 'jellyfin' } as never;
     const { imageUrl } = buildUpstreamRequest(server, '/Items/abc/Images/Primary?tag=5', {

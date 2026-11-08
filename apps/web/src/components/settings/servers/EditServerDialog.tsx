@@ -256,7 +256,9 @@ export function EditServerDialog({
                     ? t('servers.resumeFirst')
                     : server.type === 'jellyfin'
                       ? t('servers.apiKeyHelpJellyfin')
-                      : t('servers.apiKeyHelpEmby')}
+                      : server.type === 'silo'
+                        ? t('servers.apiKeyHelpSilo')
+                        : t('servers.apiKeyHelpEmby')}
                 </FieldDescription>
               </Field>
             </>

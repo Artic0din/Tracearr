@@ -90,7 +90,9 @@ function ServerDashboard({ actions }: { actions?: ReactNode }) {
   const showBandwidthChart =
     singleIsPlex || (isMultiServer && liveSelected.some((s) => s.type === 'plex'));
   const singleProcessLabel = singleServer
-    ? { plex: 'Plex Media Server', jellyfin: 'Jellyfin', emby: 'Emby' }[singleServer.type]
+    ? { plex: 'Plex Media Server', jellyfin: 'Jellyfin', emby: 'Emby', silo: 'Silo' }[
+        singleServer.type
+      ]
     : undefined;
 
   const {

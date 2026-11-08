@@ -21,6 +21,7 @@ export const SERVER_RELEASE_PAGES: Record<ServerType, string> = {
   plex: 'https://plex.tv/media-server-downloads',
   jellyfin: 'https://github.com/jellyfin/jellyfin/releases/latest',
   emby: 'https://github.com/MediaBrowser/Emby.Releases/releases/latest',
+  silo: 'https://github.com/Silo-Server/silo-server/releases',
 };
 
 const FEED_TIMEOUT_MS = 10_000;
@@ -82,7 +83,10 @@ async function latestGithubVersion(type: 'jellyfin' | 'emby'): Promise<string | 
 /** The newest release the vendor publishes, normalized. Any failure reads as "unknown". */
 export async function latestVersionFor(type: ServerType): Promise<string | null> {
   try {
-    return type === 'plex' ? await latestPlexVersion() : await latestGithubVersion(type);
+    if (type === 'plex') return await latestPlexVersion();
+    // Silo reports a commit hash, not a release number, so there is nothing to compare.
+    if (type === 'silo') return null;
+    return await latestGithubVersion(type);
   } catch (error) {
     // A firewalled or renamed feed is otherwise invisible: the nudge just never comes.
     logger.warn('Latest version lookup failed', { type, error });

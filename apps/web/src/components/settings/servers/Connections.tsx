@@ -68,7 +68,7 @@ export function Connections() {
   const [historicalId, setHistoricalId] = useState<string | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editServer, setEditServer] = useState<Server | null>(null);
-  const [serverType, setServerType] = useState<'plex' | 'jellyfin' | 'emby'>('plex');
+  const [serverType, setServerType] = useState<'plex' | 'jellyfin' | 'emby' | 'silo'>('plex');
   const [serverUrl, setServerUrl] = useState('');
   const [publicUrl, setPublicUrl] = useState('');
   const [serverName, setServerName] = useState('');
@@ -200,16 +200,22 @@ export function Connections() {
     setConnectError(null);
 
     try {
-      const connectFn =
-        serverType === 'jellyfin'
-          ? api.auth.connectJellyfinWithApiKey
-          : api.auth.connectEmbyWithApiKey;
-      await connectFn({
-        serverUrl,
-        serverName,
-        apiKey,
-        ...(publicUrl.trim() ? { publicUrl: publicUrl.trim() } : {}),
-      });
+      const extra = publicUrl.trim() ? { publicUrl: publicUrl.trim() } : {};
+      if (serverType === 'silo') {
+        await api.servers.create({
+          type: 'silo',
+          name: serverName,
+          url: serverUrl,
+          token: apiKey,
+          ...extra,
+        });
+      } else {
+        const connectFn =
+          serverType === 'jellyfin'
+            ? api.auth.connectJellyfinWithApiKey
+            : api.auth.connectEmbyWithApiKey;
+        await connectFn({ serverUrl, serverName, apiKey, ...extra });
+      }
       await refetchUser();
       await refetch();
       setShowAddDialog(false);

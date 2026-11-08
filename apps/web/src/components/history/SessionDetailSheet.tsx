@@ -82,6 +82,7 @@ const SERVER_CONFIG: Record<ServerType, { label: string; color: string }> = {
   plex: { label: 'Plex', color: 'text-amber-500' },
   jellyfin: { label: 'Jellyfin', color: 'text-purple-500' },
   emby: { label: 'Emby', color: 'text-green-500' },
+  silo: { label: 'Silo', color: 'text-red-500' },
 };
 
 const STATE_CONFIG = {

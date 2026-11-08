@@ -379,6 +379,8 @@ const IMAGE_PATH_ALLOWLIST: Record<(typeof servers.$inferSelect)['type'], RegExp
   plex: /^\/library\/metadata\/[^/?#]+\/thumb\/[^/?#]+$/,
   jellyfin: /^\/(Items|Users)\/[^/?#]+\/Images\/Primary(\?tag=[^&#]+)?$/,
   emby: /^\/(Items|Users)\/[^/?#]+\/Images\/Primary(\?tag=[^&#]+)?$/,
+  // Silo artwork is a signed link; the signature expires, so old history posters fall back.
+  silo: /^\/api\/v2\/artwork\/[\w./-]+\?exp=\d+&sig=[^&#]+$/,
 };
 
 export function buildUpstreamRequest(
@@ -415,6 +417,12 @@ export function buildUpstreamRequest(
     }
     const separator = imagePath.includes('?') ? '&' : '?';
     return { imageUrl: `${baseUrl}${imagePath}${separator}X-Plex-Token=${server.token}`, headers };
+  }
+
+  // Silo artwork is already authorized by its signature, and extra query
+  // parameters would break that signature; sharp does the resize.
+  if (server.type === 'silo') {
+    return { imageUrl: `${baseUrl}${imagePath}`, headers };
   }
 
   // Jellyfin/Emby - imagePath should include the full endpoint
