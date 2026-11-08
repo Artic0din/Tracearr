@@ -220,4 +220,36 @@ export class SiloClient implements IMediaServerClient {
   ): Promise<{ items: MediaLibraryItem[]; totalCount: number; rawCount?: number }> {
     return this.slice(libraryId, 'episode', options);
   }
+
+  // Silo filters by date added only, so edited metadata waits for the periodic full scan.
+  private async addedSince(
+    libraryId: string,
+    type: string,
+    since: Date
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const rows = await this.drain(
+      `/admin/catalog/items?library_id=${encodeURIComponent(libraryId)}&type=${type}&added_after=${encodeURIComponent(since.toISOString())}`
+    );
+    const items = rows.map(parseCatalogItem).filter((i): i is MediaLibraryItem => i !== null);
+    return { items, totalCount: items.length };
+  }
+
+  getLibraryItemsSince(
+    libraryId: string,
+    since: Date,
+    options?: { libraryType?: string }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    return this.addedSince(
+      libraryId,
+      options?.libraryType === 'tvshows' ? 'series' : 'movie',
+      since
+    );
+  }
+
+  getLibraryLeavesSince(
+    libraryId: string,
+    since: Date
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    return this.addedSince(libraryId, 'episode', since);
+  }
 }
