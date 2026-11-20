@@ -1,8 +1,20 @@
 import { lazy, Suspense, useCallback, useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Play, Clock, AlertTriangle, MapPin, Calendar, Users, Activity } from 'lucide-react';
-import { useSearchParams } from 'react-router';
+import {
+  Play,
+  Clock,
+  AlertTriangle,
+  MapPin,
+  Calendar,
+  Users,
+  Activity,
+  ArrowRight,
+  Server as ServerIcon,
+} from 'lucide-react';
+import { Link, useSearchParams } from 'react-router';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 const StreamCard = lazy(() =>
   import('@/components/map/StreamCard').then((m) => ({ default: m.StreamCard }))
@@ -15,12 +27,16 @@ import { SectionHeading } from '@/components/dashboard/SectionHeading';
 import { PersonalDashboard } from '@/components/dashboard/PersonalDashboard';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useDashboardStats, useActiveSessions } from '@/hooks/queries';
-import { useServerLiveStats, useMultiServerLiveStats } from '@/hooks/queries/useServers';
+import {
+  useServers,
+  useServerLiveStats,
+  useMultiServerLiveStats,
+} from '@/hooks/queries/useServers';
 import { useAuth } from '@/hooks/useAuth';
 import { useServer } from '@/hooks/useServer';
 import { useServerColorMap } from '@/hooks/useServerColorMap';
 import { useSocket } from '@/hooks/useSocket';
-import { pickServerColor } from '@tracearr/shared';
+import { SERVER_PROFILES, liveStatsGapSeconds, pickServerColor } from '@tracearr/shared';
 import { formatWatchTime } from '@/lib/dateFormat';
 import { cn } from '@/lib/utils';
 
@@ -56,7 +72,7 @@ function ServerDashboard({ actions }: { actions?: ReactNode }) {
   // Single-server view: Plex always shows the section; Jellyfin/Emby show it
   // once the SSE plugin's server.stats samples start arriving
   const singleServer = !isMultiServer ? selectedServers[0] : undefined;
-  const singleIsPlex = singleServer?.type === 'plex';
+  const singleProfile = singleServer && SERVER_PROFILES[singleServer.type];
 
   // Multi-server view fans out to every selected server and overlays one
   // line per server that reports data. Servers without a stats source yet
@@ -82,15 +98,15 @@ function ServerDashboard({ actions }: { actions?: ReactNode }) {
   const showServerResources =
     !!singleServer &&
     !singleServer.historicalAt &&
-    (singleIsPlex || (serverStats?.length ?? 0) > 0);
+    (singleProfile?.hostStats === 'plexStatistics' || (serverStats?.length ?? 0) > 0);
 
   const liveSelected = selectedServers.filter((s) => !s.historicalAt);
 
-  // Plex measures bandwidth; Jellyfin/Emby have no source for it
   const showBandwidthChart =
-    singleIsPlex || (isMultiServer && liveSelected.some((s) => s.type === 'plex'));
+    !!singleProfile?.reportsBandwidth ||
+    (isMultiServer && liveSelected.some((s) => SERVER_PROFILES[s.type].reportsBandwidth));
   const singleProcessLabel = singleServer
-    ? { plex: 'Plex Media Server', jellyfin: 'Jellyfin', emby: 'Emby', silo: 'Silo' }[
+    ? { plex: 'Plex Media Server', jellyfin: 'Jellyfin', emby: 'Emby', tofa: 'tofa', silo: 'Silo' }[
         singleServer.type
       ]
     : undefined;
@@ -107,43 +123,56 @@ function ServerDashboard({ actions }: { actions?: ReactNode }) {
     (s) => s.statistics.length > 0 || s.bandwidth.length > 0
   );
   const showMultiServerResources =
-    isMultiServer && (hasAnyMultiData || liveSelected.some((s) => s.type === 'plex'));
+    isMultiServer &&
+    (hasAnyMultiData ||
+      liveSelected.some((s) => SERVER_PROFILES[s.type].hostStats === 'plexStatistics'));
 
   const seriesMeta = useCallback(
-    (serverId: string) => {
-      const server = selectedServers.find((p) => p.id === serverId);
-      return {
-        serverId,
-        serverName: server?.name ?? serverId,
-        color:
-          serverColorMap.get(serverId) ??
-          pickServerColor(
-            server?.type ?? 'plex',
-            selectedServers.map((p) => p.color)
-          ),
-      };
-    },
+    (server: (typeof selectedServers)[number]) => ({
+      serverId: server.id,
+      serverName: server.name,
+      color:
+        serverColorMap.get(server.id) ??
+        pickServerColor(
+          server.type,
+          selectedServers.map((p) => p.color)
+        ),
+    }),
     [selectedServers, serverColorMap]
   );
 
+  // A series whose server is no longer selected (its stats answered after the selection
+  // changed) draws no line
   const resourceMultiSeries = useMemo(
     () =>
       showMultiServerResources
-        ? multiLiveStats
-            .filter((s) => s.statistics.length > 0)
-            .map((s) => ({ ...seriesMeta(s.serverId), data: s.statistics }))
+        ? multiLiveStats.flatMap((s) => {
+            const server = selectedServers.find((p) => p.id === s.serverId);
+            return server && s.statistics.length > 0
+              ? [
+                  {
+                    ...seriesMeta(server),
+                    gapSeconds: liveStatsGapSeconds(server.type),
+                    data: s.statistics,
+                  },
+                ]
+              : [];
+          })
         : undefined,
-    [showMultiServerResources, multiLiveStats, seriesMeta]
+    [showMultiServerResources, multiLiveStats, seriesMeta, selectedServers]
   );
 
   const bandwidthMultiSeries = useMemo(
     () =>
       showMultiServerResources
-        ? multiLiveStats
-            .filter((s) => s.bandwidth.length > 0)
-            .map((s) => ({ ...seriesMeta(s.serverId), data: s.bandwidth }))
+        ? multiLiveStats.flatMap((s) => {
+            const server = selectedServers.find((p) => p.id === s.serverId);
+            return server && s.bandwidth.length > 0
+              ? [{ ...seriesMeta(server), data: s.bandwidth }]
+              : [];
+          })
         : undefined,
-    [showMultiServerResources, multiLiveStats, seriesMeta]
+    [showMultiServerResources, multiLiveStats, seriesMeta, selectedServers]
   );
 
   const hasActiveStreams = (sessions?.length ?? 0) > 0;
@@ -244,6 +273,7 @@ function ServerDashboard({ actions }: { actions?: ReactNode }) {
               averages={showServerResources ? averages : undefined}
               multiSeries={showMultiServerResources ? resourceMultiSeries : undefined}
               processLabel={singleProcessLabel}
+              gapSeconds={singleServer ? liveStatsGapSeconds(singleServer.type) : undefined}
               clockSkewMs={clockSkewMs}
             />
             {showBandwidthChart && (
@@ -321,14 +351,41 @@ function DashboardPage({ children }: { children: ReactNode }) {
   );
 }
 
+function NoServers() {
+  const { t } = useTranslation(['pages', 'settings']);
+
+  return (
+    <EmptyState
+      icon={ServerIcon}
+      title={t('settings:servers.noServersConnected')}
+      description={t('dashboard.noServers')}
+    >
+      <Button asChild>
+        <Link to="/settings/servers/connections">
+          {t('settings:nav.sections.connections')}
+          <ArrowRight />
+        </Link>
+      </Button>
+    </EmptyState>
+  );
+}
+
 export function Dashboard() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { data: servers, isSuccess: serversLoaded } = useServers();
 
   if (user?.role === 'member') {
     return (
       <DashboardPage>
         <PersonalDashboard />
+      </DashboardPage>
+    );
+  }
+  if (user?.role === 'owner' && serversLoaded && servers.length === 0) {
+    return (
+      <DashboardPage>
+        <NoServers />
       </DashboardPage>
     );
   }

@@ -1,12 +1,9 @@
-import { Server } from 'lucide-react';
+import { assertNever, type ServerType } from '@tracearr/shared';
 import { cn } from '@/lib/utils';
 import { BASE_URL } from '@/lib/basePath';
 
-// Import server type from shared
-import type { ServerType } from '@tracearr/shared';
-
 interface MediaServerIconProps {
-  /** Server type: 'plex', 'jellyfin', or 'emby' */
+  /** Server type: 'plex', 'jellyfin', 'emby' or 'tofa' */
   type: ServerType;
   /** CSS class name for sizing (e.g., "h-4 w-4") */
   className?: string;
@@ -16,22 +13,18 @@ interface MediaServerIconProps {
 
 /**
  * Displays the appropriate icon for a media server type.
- * Falls back to generic Server icon if type is unknown.
  */
 export function MediaServerIcon({ type, className, alt }: MediaServerIconProps) {
-  const iconPath = getIconPath(type);
-
-  if (!iconPath) {
-    // Fallback to generic server icon
-    return <Server className={className} />;
-  }
-
   return (
-    <img src={iconPath} alt={alt ?? `${type} server`} className={cn('object-contain', className)} />
+    <img
+      src={mediaServerIconPath(type)}
+      alt={alt ?? `${type} server`}
+      className={cn('object-contain', className)}
+    />
   );
 }
 
-function getIconPath(type: ServerType): string | null {
+export function mediaServerIconPath(type: ServerType): string {
   const base = BASE_URL;
   switch (type) {
     case 'plex':
@@ -40,9 +33,11 @@ function getIconPath(type: ServerType): string | null {
       return `${base}images/servers/jellyfin.png`;
     case 'emby':
       return `${base}images/servers/emby.png`;
+    case 'tofa':
+      return `${base}images/servers/tofa.png`;
     case 'silo':
       return `${base}images/servers/silo.png`;
     default:
-      return null;
+      return assertNever(type);
   }
 }

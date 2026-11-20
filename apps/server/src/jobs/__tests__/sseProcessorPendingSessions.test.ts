@@ -71,9 +71,7 @@ const {
     mockBatchGetLibraryItemIdentity: vi.fn().mockResolvedValue(new Map()),
     mockBroadcastViolations: vi.fn(),
     mockMapMediaSession: vi.fn(),
-    mockCreateMediaServerClient: vi.fn().mockReturnValue({
-      getSessions: vi.fn().mockResolvedValue([]),
-    }),
+    mockCreateMediaServerClient: vi.fn(),
     mockGetIdentityServerUserIds: vi.fn().mockResolvedValue([]),
     mockDispatch: vi.fn().mockResolvedValue({ violations: [], outcomes: [] }),
     mockDb: {
@@ -208,6 +206,11 @@ import {
   stopSSEProcessor,
   cleanupOrphanedPendingSessions,
 } from '../sseProcessor.js';
+import { fakePlexClient } from '../../test/mediaServerFakes.js';
+
+mockCreateMediaServerClient.mockReturnValue(
+  fakePlexClient({ getSessions: vi.fn().mockResolvedValue([]) })
+);
 
 // Mock cache service with pending session methods
 const mockCacheService = {
@@ -387,11 +390,13 @@ describe('SSE Processor - Pending Session Flow', () => {
         }),
       });
 
-      mockCreateMediaServerClient.mockReturnValueOnce({
-        getSessions: vi
-          .fn()
-          .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
-      });
+      mockCreateMediaServerClient.mockReturnValueOnce(
+        fakePlexClient({
+          getSessions: vi
+            .fn()
+            .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
+        })
+      );
       mockMapMediaSession.mockReturnValueOnce({
         sessionKey: 'test-session-key',
         ratingKey: '12345',
@@ -450,11 +455,13 @@ describe('SSE Processor - Pending Session Flow', () => {
         }),
       });
 
-      mockCreateMediaServerClient.mockReturnValueOnce({
-        getSessions: vi
-          .fn()
-          .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
-      });
+      mockCreateMediaServerClient.mockReturnValueOnce(
+        fakePlexClient({
+          getSessions: vi
+            .fn()
+            .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
+        })
+      );
       mockMapMediaSession.mockReturnValueOnce({
         sessionKey: 'test-session-key',
         ratingKey: '12345',
@@ -489,6 +496,111 @@ describe('SSE Processor - Pending Session Flow', () => {
         processed: { identity?: unknown };
       };
       expect(pendingData.processed.identity).toEqual(identity);
+    });
+  });
+
+  describe('tofa stops', () => {
+    const row = {
+      id: 'tofa-row',
+      serverId: 'server-123',
+      sessionKey: 'tofa-session',
+      ratingKey: 'tofa-movie',
+      mediaType: 'movie',
+      progressMs: 160000,
+    };
+
+    function stopTofa(stoppedByAdmin: boolean) {
+      mockFindActiveSessionsAll.mockResolvedValueOnce([row]);
+      const set = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+      mockDb.update.mockReturnValue({ set });
+      mockSseManager.emit('tofa:session:stopped', {
+        serverId: 'server-123',
+        sessionId: 'tofa-session',
+        positionMs: 172476,
+        stoppedByAdmin,
+      });
+      return set;
+    }
+
+    it('closes the row at the position tofa reported and keeps the id from opening again', async () => {
+      const set = stopTofa(false);
+
+      await vi.waitFor(() => {
+        expect(mockCacheService.setTerminationCooldown).toHaveBeenCalledWith(
+          'server-123',
+          'tofa-session',
+          'tofa-movie'
+        );
+      });
+      expect(mockStopSessionAtomic).toHaveBeenCalledWith({
+        session: { ...row, progressMs: 172476 },
+        stoppedAt: expect.any(Date),
+        forceStopped: false,
+      });
+      expect(set).toHaveBeenCalledWith({ progressMs: 172476 });
+      // Written after the stop, so a poll holding an older position cannot overwrite it
+      expect(mockStopSessionAtomic.mock.invocationCallOrder[0]).toBeLessThan(
+        set.mock.invocationCallOrder[0] ?? 0
+      );
+    });
+
+    it('closes a channel play without the position tofa reports, which never moved', async () => {
+      const channelRow = { ...row, ratingKey: 'tofa-channel', mediaType: 'live', progressMs: null };
+      mockFindActiveSessionsAll.mockResolvedValueOnce([channelRow]);
+      const set = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+      mockDb.update.mockReturnValue({ set });
+      mockSseManager.emit('tofa:session:stopped', {
+        serverId: 'server-123',
+        sessionId: 'tofa-session',
+        positionMs: 48210,
+        stoppedByAdmin: true,
+      });
+
+      await vi.waitFor(() => {
+        expect(mockStopSessionAtomic).toHaveBeenCalledWith({
+          session: channelRow,
+          stoppedAt: expect.any(Date),
+          forceStopped: true,
+        });
+      });
+      expect(set).toHaveBeenCalledWith({ progressMs: null });
+    });
+
+    it('records a stop an admin made as forced, the way a kill is', async () => {
+      stopTofa(true);
+
+      await vi.waitFor(() => {
+        expect(mockStopSessionAtomic).toHaveBeenCalledWith(
+          expect.objectContaining({ forceStopped: true })
+        );
+      });
+    });
+
+    it('discards a pending tofa session that stopped before it showed progress, and holds its id off', async () => {
+      const pendingSession = createMockPendingSession();
+      mockCacheService.getPendingSession
+        .mockResolvedValueOnce(pendingSession)
+        .mockResolvedValueOnce(pendingSession);
+
+      mockSseManager.emit('tofa:session:stopped', {
+        serverId: 'server-123',
+        sessionId: 'test-session-key',
+        positionMs: 5000,
+        stoppedByAdmin: false,
+      });
+
+      await vi.waitFor(() => {
+        expect(mockCacheService.setTerminationCooldown).toHaveBeenCalledWith(
+          'server-123',
+          'test-session-key',
+          '12345'
+        );
+      });
+      expect(mockCacheService.deletePendingSession).toHaveBeenCalledWith(
+        'server-123',
+        'test-session-key'
+      );
+      expect(mockStopSessionAtomic).not.toHaveBeenCalled();
     });
   });
 
@@ -1091,7 +1203,9 @@ describe('SSE Processor - Pending Session Flow', () => {
       const mockGetSessions = vi
         .fn()
         .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: 'new-rating-key' }]);
-      mockCreateMediaServerClient.mockReturnValueOnce({ getSessions: mockGetSessions });
+      mockCreateMediaServerClient.mockReturnValueOnce(
+        fakePlexClient({ getSessions: mockGetSessions })
+      );
 
       // Map the new session data
       mockMapMediaSession.mockReturnValueOnce({
@@ -1161,7 +1275,9 @@ describe('SSE Processor - Pending Session Flow', () => {
       const mockGetSessions = vi
         .fn()
         .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]);
-      mockCreateMediaServerClient.mockReturnValueOnce({ getSessions: mockGetSessions });
+      mockCreateMediaServerClient.mockReturnValueOnce(
+        fakePlexClient({ getSessions: mockGetSessions })
+      );
       mockMapMediaSession.mockReturnValueOnce({
         sessionKey: 'test-session-key',
         ratingKey: '12345', // Same as pending session
@@ -1224,11 +1340,13 @@ describe('SSE Processor - Pending Session Flow', () => {
 
     it('createNewSession creates fresh when the in-lock row belongs to another user', async () => {
       setupDbForCreate();
-      mockCreateMediaServerClient.mockReturnValueOnce({
-        getSessions: vi
-          .fn()
-          .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
-      });
+      mockCreateMediaServerClient.mockReturnValueOnce(
+        fakePlexClient({
+          getSessions: vi
+            .fn()
+            .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
+        })
+      );
       mockMapMediaSession.mockReturnValueOnce({
         sessionKey: 'test-session-key',
         ratingKey: '12345',
@@ -1260,11 +1378,13 @@ describe('SSE Processor - Pending Session Flow', () => {
 
     it('createNewSession skips when the in-lock row belongs to the same user', async () => {
       setupDbForCreate();
-      mockCreateMediaServerClient.mockReturnValueOnce({
-        getSessions: vi
-          .fn()
-          .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
-      });
+      mockCreateMediaServerClient.mockReturnValueOnce(
+        fakePlexClient({
+          getSessions: vi
+            .fn()
+            .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]),
+        })
+      );
       mockMapMediaSession.mockReturnValueOnce({
         sessionKey: 'test-session-key',
         ratingKey: '12345',

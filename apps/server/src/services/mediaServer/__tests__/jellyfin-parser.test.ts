@@ -45,7 +45,7 @@ createAllSharedParserTests(
 // ============================================================================
 
 describe('Jellyfin Parser - DirectStream Behavior', () => {
-  it('should normalize DirectStream to copy (remux)', () => {
+  it('treats DirectStream without TranscodingInfo as direct play (static file)', () => {
     const session = parseSession({
       Id: 'session-1',
       NowPlayingItem: { Id: '1', Name: 'Test', Type: 'Movie' },
@@ -56,9 +56,54 @@ describe('Jellyfin Parser - DirectStream Behavior', () => {
     });
 
     expect(session!.quality.isTranscode).toBe(false);
-    // Jellyfin normalizes DirectStream to 'copy' (video/audio streams copied, container may change)
-    expect(session!.quality.videoDecision).toBe('copy');
+    expect(session!.quality.videoDecision).toBe('directplay');
+    expect(session!.quality.audioDecision).toBe('directplay');
   });
+
+  it('treats TranscodingInfo with both streams copied as a remux whatever the client reports', () => {
+    const session = parseSession({
+      Id: 'session-1',
+      NowPlayingItem: { Id: '1', Name: 'Test', Type: 'Movie' },
+      PlayState: { PlayMethod: 'DirectStream', IsPaused: false },
+      TranscodingInfo: { VideoCodec: 'h264', IsVideoDirect: true, IsAudioDirect: true },
+    });
+
+    expect(session!.quality.isTranscode).toBe(false);
+    expect(session!.quality.videoDecision).toBe('copy');
+    expect(session!.quality.audioDecision).toBe('copy');
+  });
+
+  it('treats TranscodingInfo with re-encoded video as a transcode under a DirectPlay report', () => {
+    const session = parseSession({
+      Id: 'session-1',
+      NowPlayingItem: { Id: '1', Name: 'Test', Type: 'Movie' },
+      PlayState: { PlayMethod: 'DirectPlay', IsPaused: false },
+      TranscodingInfo: { VideoCodec: 'h264', IsVideoDirect: false, IsAudioDirect: true },
+    });
+
+    expect(session!.quality.isTranscode).toBe(true);
+    expect(session!.quality.videoDecision).toBe('transcode');
+    expect(session!.quality.audioDecision).toBe('copy');
+  });
+
+  it.each([
+    { isAudioDirect: true, audioDecision: 'copy', isTranscode: false },
+    { isAudioDirect: false, audioDecision: 'transcode', isTranscode: true },
+  ])(
+    'reads an audio-only job as video direct play (audio direct: $isAudioDirect)',
+    ({ isAudioDirect, audioDecision, isTranscode }) => {
+      const session = parseSession({
+        Id: 'session-1',
+        NowPlayingItem: { Id: '1', Name: 'Song', Type: 'Audio' },
+        PlayState: { PlayMethod: 'Transcode', IsPaused: false },
+        TranscodingInfo: { VideoCodec: null, IsVideoDirect: false, IsAudioDirect: isAudioDirect },
+      });
+
+      expect(session!.quality.videoDecision).toBe('directplay');
+      expect(session!.quality.audioDecision).toBe(audioDecision);
+      expect(session!.quality.isTranscode).toBe(isTranscode);
+    }
+  );
 
   it('should fall back to TranscodingInfo when PlayMethod not available', () => {
     const session = parseSession({
@@ -68,12 +113,60 @@ describe('Jellyfin Parser - DirectStream Behavior', () => {
         IsPaused: false,
       },
       TranscodingInfo: {
+        VideoCodec: 'h264',
         IsVideoDirect: false,
       },
     });
 
     expect(session!.quality.isTranscode).toBe(true);
     expect(session!.quality.videoDecision).toBe('transcode');
+  });
+});
+
+// ============================================================================
+// Jellyfin-Specific: TranscodingInfo held across reads
+// ============================================================================
+
+describe('Jellyfin Parser - TranscodingInfo latch', () => {
+  const read = (id: string, itemId: string, playMethod: string, withInfo: boolean) =>
+    parseSessionsResponse([
+      {
+        Id: id,
+        NowPlayingItem: { Id: itemId, Name: 'Test', Type: 'Movie' },
+        PlayState: { PlayMethod: playMethod, IsPaused: false },
+        ...(withInfo && {
+          TranscodingInfo: {
+            VideoCodec: 'h264',
+            IsVideoDirect: false,
+            IsAudioDirect: true,
+            Bitrate: 4_000_000,
+          },
+        }),
+      },
+    ])[0]!;
+
+  it('keeps a transcode steady when Jellyfin clears TranscodingInfo between reads', () => {
+    read('latch-hold', 'item-1', 'DirectStream', true);
+    const next = read('latch-hold', 'item-1', 'DirectStream', false);
+
+    expect(next.quality.isTranscode).toBe(true);
+    expect(next.quality.videoDecision).toBe('transcode');
+    expect(next.quality.bitrate).toBe(4000);
+  });
+
+  it('lets go when the client reports a different play method', () => {
+    read('latch-method', 'item-1', 'Transcode', true);
+    const next = read('latch-method', 'item-1', 'DirectPlay', false);
+
+    expect(next.quality.isTranscode).toBe(false);
+    expect(next.quality.videoDecision).toBe('directplay');
+  });
+
+  it('lets go when the session moves to another item', () => {
+    read('latch-item', 'item-1', 'DirectStream', true);
+    const next = read('latch-item', 'item-2', 'DirectStream', false);
+
+    expect(next.quality.videoDecision).toBe('directplay');
   });
 });
 
@@ -197,5 +290,76 @@ describe('Jellyfin Parser - transcode progress parity', () => {
     expect(info?.hwRequested).toBeUndefined();
     expect(info?.hwEncoding).toBeUndefined();
     expect(info?.speed).toBeUndefined();
+  });
+});
+
+describe('Jellyfin Parser - Live TV', () => {
+  const channel = {
+    Id: 'channel-5',
+    Type: 'TvChannel',
+    Name: 'NBC 5',
+    ChannelNumber: '5.1',
+    ChannelId: '00000000-0000-0000-0000-000000000000',
+    ImageTags: { Primary: 'logo' },
+  };
+
+  it('names the program on air, its show and its channel', () => {
+    const session = parseSession({
+      Id: 'session-1',
+      NowPlayingItem: {
+        ...channel,
+        CurrentProgram: {
+          Id: 'program-9',
+          Name: 'Friends',
+          EpisodeTitle: "The One with Phoebe's Ex-Partner",
+          ParentIndexNumber: 3,
+          IndexNumber: 14,
+          ImageTags: { Primary: 'still' },
+        },
+      },
+    });
+
+    expect(session?.media).toMatchObject({
+      type: 'live',
+      title: "The One with Phoebe's Ex-Partner",
+      thumbPath: '/Items/program-9/Images/Primary',
+    });
+    expect(session?.episode).toEqual({ showTitle: 'Friends', seasonNumber: 3, episodeNumber: 14 });
+    expect(session?.live).toEqual({
+      channelTitle: 'NBC 5',
+      channelIdentifier: '5.1',
+      channelThumb: '/Items/channel-5/Images/Primary',
+    });
+  });
+
+  it('titles a program that is not an episode by its name', () => {
+    const session = parseSession({
+      Id: 'session-1',
+      NowPlayingItem: { ...channel, CurrentProgram: { Id: 'program-2', Name: 'News at 3' } },
+    });
+
+    expect(session?.media.title).toBe('News at 3');
+    expect(session?.episode).toBeUndefined();
+  });
+
+  it('goes back to the channel once the program it started on has ended', () => {
+    const session = parseSession({
+      Id: 'session-1',
+      NowPlayingItem: {
+        ...channel,
+        CurrentProgram: { Id: 'program-2', Name: 'News at 3', EndDate: '2020-01-01T16:00:00Z' },
+      },
+    });
+
+    expect(session?.media.title).toBe('NBC 5');
+  });
+
+  it('keeps the channel as the title when no program is known', () => {
+    const session = parseSession({ Id: 'session-1', NowPlayingItem: channel });
+
+    expect(session?.media).toMatchObject({
+      title: 'NBC 5',
+      thumbPath: '/Items/channel-5/Images/Primary',
+    });
   });
 });

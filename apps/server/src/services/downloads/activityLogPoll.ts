@@ -1,10 +1,11 @@
-import { REDIS_KEYS } from '@tracearr/shared';
+import { REDIS_KEYS, SERVER_TYPES, assertNever } from '@tracearr/shared';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import { servers } from '../../db/schema.js';
 import { getRedis } from '../../lib/redisShared.js';
 import { liveServerCondition, type ServerRow } from '../liveServers.js';
-import { createMediaServerClient } from '../mediaServer/index.js';
+import { createJellyfinEmbyClient, isJellyfinEmby, TofaClient } from '../mediaServer/index.js';
+import type { TofaMedia, TofaDownload } from '../mediaServer/tofa/types.js';
 import { getServerUserIdByExternalId } from '../../jobs/poller/database.js';
 import { deliveredFile } from './enrich.js';
 import { recordDownload, type DownloadSignal } from './recorder.js';
@@ -92,8 +93,10 @@ async function toSignal(
 }
 
 async function pollServer(server: ServerRow): Promise<void> {
+  const { type } = server;
+  if (!isJellyfinEmby(type)) return;
   await exclusive(server.id, async () => {
-    const client = createMediaServerClient(server) as ActivityLogClient;
+    const client = createJellyfinEmbyClient(type, server);
     const redis = getRedis();
     const key = REDIS_KEYS.DOWNLOAD_CURSOR(server.id);
     const stored = await redis.get(key);
@@ -144,8 +147,10 @@ function syncSignal(
 }
 
 async function pollSync(server: ServerRow): Promise<void> {
+  const { type } = server;
+  if (!isJellyfinEmby(type)) return;
   await exclusive(`sync:${server.id}`, async () => {
-    const client = createMediaServerClient(server) as ActivityLogClient;
+    const client = createJellyfinEmbyClient(type, server);
     const redis = getRedis();
     const cursorKey = REDIS_KEYS.SYNC_CURSOR(server.id);
     const recordedKey = REDIS_KEYS.SYNC_RECORDED(server.id);
@@ -187,6 +192,94 @@ async function pollSync(server: ServerRow): Promise<void> {
   });
 }
 
+function tofaSignal(
+  server: ServerRow,
+  download: TofaDownload,
+  media: TofaMedia | undefined,
+  serverUserId: string | null
+): DownloadSignal {
+  return {
+    serverId: server.id,
+    serverUserId,
+    // An episode's item is the episode the file holds, which the show's media names
+    ratingKey:
+      download.media_type === 'tv'
+        ? (media?.episodesByFile.get(download.media_file_id)?.id ?? null)
+        : download.media_id,
+    title: download.episode_title
+      ? `${download.title} - ${download.episode_title}`
+      : download.title,
+    app: null,
+    device: download.device_name,
+    source: 'tofa',
+    seenAt: new Date(download.created_at),
+    partId: download.media_file_id,
+    deviceId: download.device_id,
+  };
+}
+
+/** Records each offline download tofa lists after the server's cursor, a creation time seeded 24 h back. */
+async function pollTofa(server: ServerRow): Promise<void> {
+  await exclusive(server.id, async () => {
+    const client = new TofaClient(server);
+    const redis = getRedis();
+    const key = REDIS_KEYS.DOWNLOAD_CURSOR(server.id);
+    const stored = await redis.get(key);
+    const cursor = stored === null ? null : Number(stored);
+    const downloads = (
+      await client.getDownloadsAfter(new Date(cursor ?? Date.now() - SEED_WINDOW_MS))
+    ).toSorted((a, b) => Date.parse(a.download.created_at) - Date.parse(b.download.created_at));
+
+    let last = cursor;
+    try {
+      for (const { download, media } of downloads) {
+        const serverUserId = await getServerUserIdByExternalId(server.id, download.user_id);
+        await recordDownload(tofaSignal(server, download, media, serverUserId)).catch(
+          (error: unknown) => {
+            console.error(
+              `[Downloads] Download ${download.id} on ${server.name} not recorded:`,
+              error
+            );
+          }
+        );
+        last = Date.parse(download.created_at);
+      }
+    } finally {
+      if (last !== null && last !== cursor) await redis.set(key, String(last));
+    }
+  });
+}
+
+/** The polls that find a server's downloads; Plex reports its downloads on its socket instead. */
+function downloadPolls(server: ServerRow): Promise<void>[] {
+  switch (server.type) {
+    case 'plex':
+    case 'silo':
+      return [];
+    case 'jellyfin':
+    case 'emby':
+      return [
+        pollServer(server).catch((error: unknown) => {
+          console.error(`[Downloads] Activity log poll failed for ${server.name}:`, error);
+        }),
+        pollSync(server).catch((error: unknown) => {
+          console.error(`[Downloads] Sync job poll failed for ${server.name}:`, error);
+        }),
+        pollServerTranscodePulls(server).catch((error: unknown) => {
+          console.error(`[Downloads] Transcode pull poll failed for ${server.name}:`, error);
+        }),
+      ];
+    case 'tofa':
+      return [
+        pollTofa(server).catch((error: unknown) => {
+          console.error(`[Downloads] Download list poll failed for ${server.name}:`, error);
+        }),
+      ];
+    default:
+      return assertNever(server.type);
+  }
+}
+
 /** Reads new UserDownloadingContent entries after the server's cursor (seeded 24 h back), records each, advances the cursor. Drops the run if one is already in flight for the server. */
 export async function pollServerDownloads(serverId: string): Promise<void> {
   const [server] = await db
@@ -195,7 +288,7 @@ export async function pollServerDownloads(serverId: string): Promise<void> {
     .where(
       and(
         eq(servers.id, serverId),
-        inArray(servers.type, ['jellyfin', 'emby']),
+        inArray(servers.type, SERVER_TYPES.filter(isJellyfinEmby)),
         liveServerCondition
       )
     )
@@ -211,7 +304,7 @@ export async function pollServerSyncJobs(serverId: string): Promise<void> {
     .where(
       and(
         eq(servers.id, serverId),
-        inArray(servers.type, ['jellyfin', 'emby']),
+        inArray(servers.type, SERVER_TYPES.filter(isJellyfinEmby)),
         liveServerCondition
       )
     )
@@ -220,21 +313,6 @@ export async function pollServerSyncJobs(serverId: string): Promise<void> {
 }
 
 export async function pollAllDownloads(): Promise<void> {
-  const rows = await db
-    .select()
-    .from(servers)
-    .where(and(inArray(servers.type, ['jellyfin', 'emby']), liveServerCondition));
-  await Promise.all(
-    rows.flatMap((server) => [
-      pollServer(server).catch((error: unknown) => {
-        console.error(`[Downloads] Activity log poll failed for ${server.name}:`, error);
-      }),
-      pollSync(server).catch((error: unknown) => {
-        console.error(`[Downloads] Sync job poll failed for ${server.name}:`, error);
-      }),
-      pollServerTranscodePulls(server).catch((error: unknown) => {
-        console.error(`[Downloads] Transcode pull poll failed for ${server.name}:`, error);
-      }),
-    ])
-  );
+  const rows = await db.select().from(servers).where(liveServerCondition);
+  await Promise.all(rows.flatMap(downloadPolls));
 }

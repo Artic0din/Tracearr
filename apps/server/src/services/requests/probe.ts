@@ -1,4 +1,4 @@
-import type { RequestServiceProbeResult } from '@tracearr/shared';
+import { assertNever, type RequestServiceProbeResult, type ServerType } from '@tracearr/shared';
 import { SeerrClient } from './seerrClient.js';
 import { findServerByMachineId } from './serverLookup.js';
 
@@ -9,11 +9,27 @@ export class SeerrProbeError extends Error {
   }
 }
 
-const MEDIA_SERVER_TYPES: Record<number, RequestServiceProbeResult['mediaServerType']> = {
+/** The media servers Seerr connects to, by its mediaServerType code */
+type SeerrMediaServerType = Extract<ServerType, 'plex' | 'jellyfin' | 'emby'>;
+
+const MEDIA_SERVER_TYPES: Record<number, SeerrMediaServerType> = {
   1: 'plex',
   2: 'jellyfin',
   3: 'emby',
 };
+
+/** Seerr keeps Jellyfin and Emby under one settings page. */
+async function remoteServerIdOf(client: SeerrClient, type: SeerrMediaServerType) {
+  switch (type) {
+    case 'plex':
+      return (await client.plexSettings()).machineId;
+    case 'jellyfin':
+    case 'emby':
+      return (await client.jellyfinSettings()).serverId;
+    default:
+      return assertNever(type);
+  }
+}
 
 export async function probeSeerr(url: string, apiKey: string): Promise<RequestServiceProbeResult> {
   const client = new SeerrClient(url, apiKey);
@@ -22,10 +38,7 @@ export async function probeSeerr(url: string, apiKey: string): Promise<RequestSe
   if (!mediaServerType) {
     throw new SeerrProbeError('This Seerr has no media server configured yet');
   }
-  const remoteServerId =
-    mediaServerType === 'plex'
-      ? (await client.plexSettings()).machineId
-      : (await client.jellyfinSettings()).serverId;
+  const remoteServerId = await remoteServerIdOf(client, mediaServerType);
   if (!remoteServerId) {
     throw new SeerrProbeError('Seerr did not report a media server id');
   }

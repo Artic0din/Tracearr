@@ -30,8 +30,9 @@ import { MemberLogin } from './MemberLogin';
 const REFUSAL = 'That would leave the owner with no way to sign in.';
 
 const settings = {
-  loginMethods: { local: true, plex: false, oidc: true, member: false },
+  loginMethods: { local: true, plex: false, oidc: true, tofa: false, member: false },
   memberServerActivity: false,
+  memberSsoOnly: false,
   oidcConfigured: true,
 } as SettingsResponse;
 
@@ -49,7 +50,7 @@ function makeServer(overrides: Partial<Server>): Server {
   };
 }
 
-function owner(holds: { hasPassword?: boolean; hasPlexLinked?: boolean }) {
+function owner(holds: { hasPassword?: boolean; hasPlexLinked?: boolean; hasTofaLinked?: boolean }) {
   vi.mocked(useAuth).mockReturnValue({ user: { role: 'owner', ...holds } } as never);
 }
 
@@ -113,6 +114,18 @@ describe('Sign-in settings', () => {
     );
   });
 
+  it('offers single sign-on only when OIDC is configured and saves it without waiting', async () => {
+    const { unmount } = renderPage();
+    await userEvent.click(await switchFor('memberLogin.signIn.ssoOnly'));
+    expect(api.settings.update).toHaveBeenCalledWith({ memberSsoOnly: true });
+    unmount();
+
+    vi.mocked(api.settings.get).mockResolvedValue({ ...settings, oidcConfigured: false });
+    renderPage();
+    await switchFor('memberLogin.signIn.media');
+    expect(screen.queryByRole('switch', { name: 'memberLogin.signIn.ssoOnly' })).toBeNull();
+  });
+
   it('shows the refusal under the switch and snaps it back', async () => {
     vi.mocked(api.settings.update).mockRejectedValue(new Error(REFUSAL));
     renderPage();
@@ -133,6 +146,23 @@ describe('Sign-in settings', () => {
     expect(screen.getByText('Den')).toBeInTheDocument();
     expect(screen.queryByText('Old')).toBeNull();
     expect(document.getElementById('allowMemberLogin-s2')).toBeChecked();
+  });
+
+  it('opens a tofa server to member sign-in like any other server', async () => {
+    vi.mocked(api.servers.list).mockResolvedValue([makeServer({ id: 's4', type: 'tofa' })]);
+    vi.mocked(api.servers.update).mockResolvedValue(makeServer({}));
+    renderPage();
+    await screen.findByText('Home');
+
+    expect(screen.queryByText('servers.noSignIn')).toBeNull();
+    await userEvent.click(document.getElementById('allowMemberLogin-s4') as HTMLElement);
+
+    await waitFor(() =>
+      expect(api.servers.update).toHaveBeenCalledWith(
+        's4',
+        expect.objectContaining({ allowMemberLogin: true })
+      )
+    );
   });
 
   it('saves a server switch through the server update and stays quiet about it', async () => {
@@ -157,6 +187,22 @@ describe('Sign-in settings', () => {
 
     await switchFor('memberLogin.signIn.plex');
     expect(screen.queryByRole('switch', { name: 'memberLogin.signIn.local' })).toBeNull();
+  });
+
+  it('the tofa switch shows for an owner with tofa linked', async () => {
+    const { unmount } = renderPage();
+    await switchFor('memberLogin.signIn.plex');
+    expect(screen.queryByRole('switch', { name: 'memberLogin.signIn.tofa' })).toBeNull();
+    unmount();
+
+    owner({ hasPassword: true, hasTofaLinked: true });
+    renderPage();
+
+    await userEvent.click(await switchFor('memberLogin.signIn.tofa'));
+
+    await waitFor(() =>
+      expect(api.settings.update).toHaveBeenCalledWith({ loginMethods: { tofa: true } })
+    );
   });
 
   it('holds the last method still on instead of letting it be refused', async () => {

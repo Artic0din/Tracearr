@@ -291,7 +291,7 @@ describe('getAuth construction', () => {
   it('registers the expected plugins', () => {
     const auth = getAuth();
     const pluginIds = auth.options.plugins?.map((p) => p.id);
-    expect(pluginIds).toEqual(['username', 'admin', 'bearer', 'plex', 'member-login']);
+    expect(pluginIds).toEqual(['username', 'admin', 'bearer', 'plex', 'tofa', 'member-login']);
   });
 
   it('counts a sign-in when a session is created, never when one is refreshed', () => {
@@ -339,6 +339,7 @@ describe('getAuth construction', () => {
         'admin',
         'bearer',
         'plex',
+        'tofa',
         'member-login',
         'generic-oauth',
       ]);
@@ -358,6 +359,7 @@ describe('getAuth construction', () => {
           discoveryUrl: 'https://auth.example.com/.well-known/openid-configuration',
           scopes: ['openid', 'email', 'profile'],
           pkce: true,
+          disableProviderLogout: true,
           mapProfileToUser: expect.any(Function),
         },
       ]);

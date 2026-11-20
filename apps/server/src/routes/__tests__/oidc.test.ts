@@ -65,7 +65,9 @@ describe('oidc gating', () => {
         plex: true,
         oidc: false,
         oidcProviderName: null,
+        tofa: true,
         member: false,
+        ssoOnly: false,
       });
 
       await app.close();
@@ -86,7 +88,9 @@ describe('oidc gating', () => {
         plex: true,
         oidc: true,
         oidcProviderName: 'Authentik',
+        tofa: true,
         member: false,
+        ssoOnly: false,
       });
 
       await app.close();
@@ -118,7 +122,9 @@ describe('oidc gating', () => {
         plex: true,
         oidc: false,
         oidcProviderName: null,
+        tofa: true,
         member: false,
+        ssoOnly: false,
       });
 
       await app.close();

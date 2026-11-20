@@ -6,13 +6,19 @@
  */
 
 import { fetchJson, HttpClientError } from '../../../utils/http.js';
-import type {
-  IMediaServerClient,
-  MediaLibrary,
-  MediaLibraryItem,
-  MediaServerConfig,
-  MediaSession,
-  MediaUser,
+import {
+  cursorDate,
+  NOT_NEEDED,
+  type DownloadSourceDescription,
+  type DownloadSourceRequest,
+  type IMediaServerClient,
+  type MediaLibrary,
+  type MediaLibraryItem,
+  type MediaServerConfig,
+  type MediaSession,
+  type MediaUser,
+  type NotNeeded,
+  type SyncCursor,
 } from '../types.js';
 import {
   nextCursor,
@@ -143,9 +149,24 @@ export class SiloClient implements IMediaServerClient {
     return typeof server_version === 'string' && server_version ? server_version : null;
   }
 
-  async getSessions(): Promise<MediaSession[]> {
+  async getSessions(sessionKey?: string): Promise<MediaSession[]> {
     const rows = await this.drain('/admin/sessions');
-    return rows.map(parseSession).filter((s): s is MediaSession => s !== null);
+    const sessions = rows.map(parseSession).filter((s): s is MediaSession => s !== null);
+    return sessionKey ? sessions.filter((s) => s.sessionKey === sessionKey) : sessions;
+  }
+
+  async describeDownloadSource(request: DownloadSourceRequest): Promise<DownloadSourceDescription> {
+    return {
+      version: null,
+      delivered: null,
+      device: {
+        deviceId: request.deviceId,
+        playerName: request.device,
+        product: request.app,
+        platform: null,
+      },
+      ipAddress: null,
+    };
   }
 
   async getUsers(): Promise<MediaUser[]> {
@@ -214,6 +235,17 @@ export class SiloClient implements IMediaServerClient {
     return this.slice(libraryId, type, options);
   }
 
+  async findExistingRatingKeys(
+    ratingKeys: string[],
+    library: { id: string; type: string }
+  ): Promise<Set<string>> {
+    if (ratingKeys.length === 0) return new Set();
+    const types = library.type === 'tvshows' ? ['series', 'episode'] : ['movie'];
+    const listings = await Promise.all(types.map((type) => this.catalog(library.id, type)));
+    const known = new Set(listings.flat().map((item) => item.ratingKey));
+    return new Set(ratingKeys.filter((key) => known.has(key)));
+  }
+
   getLibraryLeaves(
     libraryId: string,
     options?: { offset?: number; limit?: number }
@@ -234,22 +266,47 @@ export class SiloClient implements IMediaServerClient {
     return { items, totalCount: items.length };
   }
 
-  getLibraryItemsSince(
+  async getLibraryItemsSince(
     libraryId: string,
-    since: Date,
-    options?: { libraryType?: string }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
-    return this.addedSince(
+    since: SyncCursor,
+    options?: { offset?: number; limit?: number; libraryType?: string }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number; feed: NotNeeded }> {
+    const result = await this.addedSince(
       libraryId,
       options?.libraryType === 'tvshows' ? 'series' : 'movie',
-      since
+      cursorDate(since)
     );
+    return { ...result, feed: NOT_NEEDED };
   }
 
   getLibraryLeavesSince(
     libraryId: string,
-    since: Date
+    since: SyncCursor
   ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
-    return this.addedSince(libraryId, 'episode', since);
+    return this.addedSince(libraryId, 'episode', cursorDate(since));
+  }
+
+  async getLibraryRevision(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  async getLibrarySeasons(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  async getLibrarySeasonsSince(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  async getLibraryAlbums(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  async getLibraryAlbumsSince(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  async checkFilesExist(): Promise<NotNeeded> {
+    return NOT_NEEDED;
   }
 }

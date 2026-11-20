@@ -5,14 +5,15 @@
  * Enables code reuse across different media server implementations.
  */
 
-import type {
-  ServerType,
-  SourceVideoDetails,
-  SourceAudioDetails,
-  StreamVideoDetails,
-  StreamAudioDetails,
-  TranscodeInfo,
-  SubtitleInfo,
+import {
+  assertNever,
+  type ServerType,
+  type SourceVideoDetails,
+  type SourceAudioDetails,
+  type StreamVideoDetails,
+  type StreamAudioDetails,
+  type TranscodeInfo,
+  type SubtitleInfo,
 } from '@tracearr/shared';
 
 // ============================================================================
@@ -41,6 +42,8 @@ export interface MediaSession {
     id: string;
     username: string;
     thumb?: string;
+    /** The profile that plays, where one account holds several (tofa) */
+    profileName?: string;
   };
 
   /** Media metadata */
@@ -124,6 +127,8 @@ export interface MediaSession {
     ipAddress: string;
     /** Whether client is on local network */
     isLocal: boolean;
+    /** The client reached the server through its relay, which hides the client's address */
+    relayed?: boolean;
   };
 
   /** Stream quality information */
@@ -200,8 +205,10 @@ export interface MediaUser {
   username: string;
   /** Email address (may be empty for local accounts) */
   email?: string;
-  /** Avatar/profile image URL */
-  thumb?: string;
+  /** Avatar/profile image URL; null when the server says the user has none */
+  thumb?: string | null;
+  /** The server could not read pictures this time, so the stored one stays */
+  picturesUnread?: boolean;
   /** Whether user is an administrator */
   isAdmin: boolean;
   /** Whether user account is disabled */
@@ -216,6 +223,8 @@ export interface MediaUser {
   lastActivityAt?: Date;
   /** When user joined/was added to media server (Plex only - from createdAt/joinedAt) */
   joinedAt?: Date;
+  /** tofa only: the cloud account that signs in as this user, null when none may */
+  cloudIdentityId?: string | null;
 }
 
 // ============================================================================
@@ -260,9 +269,9 @@ export interface DeliveredFile {
 export interface DownloadSourceRequest {
   /** The server's item id (Plex ratingKey, Jellyfin/Emby ItemId) */
   itemKey: string | null;
-  /** Plex Context.partID */
+  /** The file: Plex Context.partID, tofa media_file_id */
   partId: string | null;
-  /** Set when the signal names its device: Plex clientIdentifier, Emby sync TargetId */
+  /** Set when the signal names its device: Plex clientIdentifier, Emby sync TargetId, tofa device_id */
   deviceId: string | null;
   /** The account's externalId */
   userId: string | null;
@@ -484,6 +493,47 @@ export interface MediaServerConfig {
   name?: string;
 }
 
+/** A client's answer for a step its server does not need. */
+export const NOT_NEEDED = Symbol('not needed');
+export type NotNeeded = typeof NOT_NEEDED;
+
+/**
+ * Where an incremental library read picks up. Plex, Jellyfin and Emby list what changed after
+ * a date; tofa numbers every library change and lists those after a revision.
+ */
+export type SyncCursor = { kind: 'date'; since: Date } | { kind: 'revision'; since: number };
+
+/**
+ * What a server that numbers its changes reports beyond the changed items. A server that lists
+ * changes after a date reports no deletions; a full scan finds those.
+ */
+export interface LibraryChangeFeed {
+  /** Items deleted since the cursor; their seasons and episodes go with them */
+  deletedIds: string[];
+  /** Items listed with every child they still have, so a stored child not listed is gone */
+  wholeIds: string[];
+  /** The revision the next incremental read picks up from */
+  revision: number;
+}
+
+/** The server no longer holds every change since the cursor, so only a full scan is complete */
+export class FullSyncRequiredError extends Error {}
+
+/** Past this fraction of a library changed, a full scan replaces the incremental sync */
+export const INCREMENTAL_CAP_RATIO = 0.3;
+
+/** The date a cursor for a server that lists changes by date picks up from */
+export function cursorDate(cursor: SyncCursor): Date {
+  switch (cursor.kind) {
+    case 'date':
+      return cursor.since;
+    case 'revision':
+      throw new Error('This server lists library changes by date, not by revision');
+    default:
+      return assertNever(cursor);
+  }
+}
+
 /**
  * Common interface for media server clients
  *
@@ -525,16 +575,16 @@ export interface IMediaServerClient {
    * The server's own identifier, as its web client addresses it. Distinct from
    * the Tracearr `servers.id` row uuid.
    */
-  getServerIdentity?(): Promise<string | null>;
+  getServerIdentity(): Promise<string | null>;
 
   /** The version the server reports for itself, unnormalized (Plex carries a build hash). */
-  getSoftwareVersion?(): Promise<string | null>;
+  getSoftwareVersion(): Promise<string | null>;
 
   /**
    * The file and client behind a download. Best effort per lookup: a failed
    * request leaves its fields null and keeps the rest.
    */
-  describeDownloadSource?(request: DownloadSourceRequest): Promise<DownloadSourceDescription>;
+  describeDownloadSource(request: DownloadSourceRequest): Promise<DownloadSourceDescription>;
 
   /**
    * Terminate a playback session
@@ -572,10 +622,12 @@ export interface IMediaServerClient {
 
   /**
    * Which of the given rating keys the server still has as items of this
-   * library. Optional - the full scan uses it to confirm that an item missing
-   * from the listing is gone before tombstoning it.
+   * library. The full scan uses it to confirm that an item missing from the
+   * listing is gone before tombstoning it. tofa cannot look up an episode or
+   * season by id, so it is asked only about keys a complete listing of the
+   * library left out.
    */
-  findExistingRatingKeys?(
+  findExistingRatingKeys(
     ratingKeys: string[],
     library: { id: string; type: string }
   ): Promise<Set<string>>;
@@ -584,14 +636,13 @@ export interface IMediaServerClient {
    * Get all leaf items (episodes) from a library with pagination support
    *
    * For TV show libraries, returns all episodes across all shows.
-   * Optional - only implemented by servers that support hierarchical libraries.
    *
    * @param libraryId - The library identifier
    * @param options - Pagination options
-   * @returns Promise with episode items and total count, or undefined if not supported.
-   *   See getLibraryItems for the rawCount caveat.
+   * @returns Promise with episode items and total count. See getLibraryItems for
+   *   the rawCount caveat.
    */
-  getLibraryLeaves?(
+  getLibraryLeaves(
     libraryId: string,
     options?: {
       offset?: number;
@@ -600,103 +651,116 @@ export interface IMediaServerClient {
   ): Promise<{ items: MediaLibraryItem[]; totalCount: number; rawCount?: number }>;
 
   /**
-   * Get items added or changed since a given date. Used for incremental sync.
-   * Optional — falls back to full fetch if not implemented.
+   * Get items added or changed since the cursor. Used for incremental sync.
    *
    * @param libraryId - The library identifier
-   * @param since - Only return items added or modified after this date
+   * @param since - Only return items added or modified after this point
    * @param options - Pagination options
-   * @returns Promise with items array and total count for pagination
+   * @returns The changed items; totalCount counts each changed entry once, so a show whose
+   *   seasons and episodes come with it counts one. feed carries the deletions and the next
+   *   revision from a server that numbers its changes, and is NOT_NEEDED from one that lists
+   *   changes by date.
+   * @throws FullSyncRequiredError when the server no longer holds every change since the cursor
    */
-  getLibraryItemsSince?(
+  getLibraryItemsSince(
     libraryId: string,
-    since: Date,
+    since: SyncCursor,
     options?: { offset?: number; limit?: number; libraryType?: string }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
+  ): Promise<{
+    items: MediaLibraryItem[];
+    totalCount: number;
+    feed: LibraryChangeFeed | NotNeeded;
+  }>;
 
   /**
-   * Get leaf items (episodes/tracks) added or changed since a given date.
-   * Optional — falls back to full fetch if not implemented.
+   * Get leaf items (episodes/tracks) added or changed since the cursor. tofa lists a changed
+   * show's episodes with the show from getLibraryItemsSince, so it answers NOT_NEEDED.
    *
    * @param libraryId - The library identifier
-   * @param since - Only return items added or modified after this date
+   * @param since - Only return items added or modified after this point
    * @param options - Pagination options
    * @returns Promise with items array and total count for pagination
    */
-  getLibraryLeavesSince?(
+  getLibraryLeavesSince(
     libraryId: string,
-    since: Date,
+    since: SyncCursor,
     options?: { offset?: number; limit?: number }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number } | NotNeeded>;
 
   /**
-   * Get all seasons for a library with pagination support. Plex-only: JF/Emby
-   * return season items through getLibraryLeaves/getLibraryLeavesSince instead,
-   * so this stays undefined for those clients.
+   * The revision of the server's latest library change, which a full scan reads before it lists
+   * anything and stores for the next incremental read. A server that lists changes by date
+   * answers NOT_NEEDED: the sync takes the date when it saves.
+   */
+  getLibraryRevision(): Promise<number | NotNeeded>;
+
+  /**
+   * Get all seasons for a library with pagination support. JF/Emby return
+   * season items through getLibraryLeaves/getLibraryLeavesSince instead, so
+   * they answer NOT_NEEDED.
    *
    * @param libraryId - The library identifier
    * @param options - Pagination options
    * @returns Promise with season items and total count
    */
-  getLibrarySeasons?(
+  getLibrarySeasons(
     libraryId: string,
     options?: { offset?: number; limit?: number }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number; rawCount?: number }>;
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number; rawCount?: number } | NotNeeded>;
 
   /**
-   * Get seasons added or changed since a given date. Plex-only counterpart to
-   * getLibrarySeasons; see that method's doc for why JF/Emby don't implement this.
+   * Get seasons added or changed since the cursor. Counterpart to
+   * getLibrarySeasons; see that method's doc for why JF/Emby answer NOT_NEEDED.
    *
    * @param libraryId - The library identifier
-   * @param since - Only return seasons added or modified after this date
+   * @param since - Only return seasons added or modified after this point
    * @param options - Pagination options
    * @returns Promise with season items and total count
    */
-  getLibrarySeasonsSince?(
+  getLibrarySeasonsSince(
     libraryId: string,
-    since: Date,
+    since: SyncCursor,
     options?: { offset?: number; limit?: number }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number } | NotNeeded>;
 
   /**
-   * Get all albums for a music library with pagination support. Plex-only:
-   * JF/Emby return MusicAlbum items through getLibraryItems, so this stays
-   * undefined for those clients.
+   * Get all albums for a music library with pagination support. JF/Emby
+   * return MusicAlbum items through getLibraryItems, so they answer NOT_NEEDED.
    *
    * @param libraryId - The library identifier
    * @param options - Pagination options
    * @returns Promise with album items and total count
    */
-  getLibraryAlbums?(
+  getLibraryAlbums(
     libraryId: string,
     options?: { offset?: number; limit?: number }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number } | NotNeeded>;
 
   /**
-   * Get albums added or changed since a given date. Plex-only counterpart to
+   * Get albums added or changed since the cursor. Counterpart to
    * getLibraryAlbums.
    *
    * @param libraryId - The library identifier
-   * @param since - Only return albums added or modified after this date
+   * @param since - Only return albums added or modified after this point
    * @param options - Pagination options
    * @returns Promise with album items and total count
    */
-  getLibraryAlbumsSince?(
+  getLibraryAlbumsSince(
     libraryId: string,
-    since: Date,
+    since: SyncCursor,
     options?: { offset?: number; limit?: number }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number } | NotNeeded>;
 
   /**
-   * Ask the server whether each item's files are still on disk. Plex-only:
-   * its listings keep reporting a file until the library trash is emptied, and
-   * only the metadata endpoint says whether the file is really there. JF/Emby
-   * drop the item instead, so they leave this undefined.
+   * Ask the server whether each item's files are still on disk. Plex listings
+   * keep reporting a file until the library trash is emptied, and only the
+   * metadata endpoint says whether the file is really there. JF/Emby drop the
+   * item instead, so they answer NOT_NEEDED.
    *
    * @param ratingKeys - Server item identifiers to check
    * @returns Rating key -> version key -> whether the file exists
    */
-  checkFilesExist?(ratingKeys: string[]): Promise<Map<string, Map<string, boolean>>>;
+  checkFilesExist(ratingKeys: string[]): Promise<Map<string, Map<string, boolean>> | NotNeeded>;
 }
 
 /**

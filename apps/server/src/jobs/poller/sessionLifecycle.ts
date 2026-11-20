@@ -14,6 +14,7 @@ import {
   type EngineAutomation,
   type Session,
   type StreamDetailFields,
+  type ServerType,
 } from '@tracearr/shared';
 import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '../../db/client.js';
@@ -28,6 +29,7 @@ import {
 } from '../../services/automations/events/producers.js';
 import type { ActionResult } from '../../services/automations/executors/index.js';
 import { getWatchedThreshold } from '../../services/settings.js';
+import { serverWatchedThreshold } from '../../services/mediaServer/byServerType.js';
 import {
   resolveSessionGeo,
   type SessionGeo,
@@ -36,13 +38,14 @@ import {
 import { isLocalSession } from '../../db/sessions/rules.js';
 import { clearDbWriteTracking } from './dbWriteThrottle.js';
 import { pickStreamDetailFields } from './sessionMapper.js';
+import { canTerminate } from './sessionIdentity.js';
 import {
   calculateStopDuration,
   checkWatchCompletion,
   shouldRecordSession,
 } from './stateTracker.js';
 import type { DbTx } from '../../services/automations/events/types.js';
-import type { SessionIdentity as MediaItemIdentity } from './database.js';
+import { getCachedServers, type SessionIdentity as MediaItemIdentity } from './database.js';
 import type {
   CompositeSessionIdentity,
   MediaChangeInput,
@@ -126,6 +129,7 @@ export interface BuildActiveSessionInput {
     totalDurationMs: number;
     progressMs: number;
     serverVersionKey?: string | null;
+    profileName?: string | null;
     ipAddress: string;
     playerName: string;
     deviceId: string;
@@ -165,7 +169,7 @@ export interface BuildActiveSessionInput {
   server: {
     id: string;
     name: string;
-    type: 'plex' | 'jellyfin' | 'emby' | 'silo';
+    type: ServerType;
   };
 
   /** Optional overrides for update scenarios */
@@ -198,8 +202,8 @@ export function buildActiveSession(input: BuildActiveSessionInput): ActiveSessio
     mediaType: processed.mediaType,
     mediaTitle: processed.mediaTitle,
     grandparentTitle: processed.grandparentTitle || null,
-    seasonNumber: processed.mediaType === 'episode' ? processed.seasonNumber : null,
-    episodeNumber: processed.mediaType === 'episode' ? processed.episodeNumber : null,
+    seasonNumber: processed.seasonNumber,
+    episodeNumber: processed.episodeNumber,
     year: processed.year || null,
     thumbPath: processed.thumbPath || null,
     ratingKey: processed.ratingKey || null,
@@ -250,6 +254,7 @@ export function buildActiveSession(input: BuildActiveSessionInput): ActiveSessio
     geoAsnNumber: geo.asnNumber,
     geoAsnOrganization: geo.asnOrganization,
     isLocal: geo.isLocal,
+    profileName: processed.profileName ?? null,
     playerName: processed.playerName,
     deviceId: processed.deviceId || null,
     product: processed.product || null,
@@ -281,7 +286,7 @@ export function buildActiveSession(input: BuildActiveSessionInput): ActiveSessio
     server: { id: server.id, name: server.name, type: server.type },
 
     // Termination capability - Plex requires Session.id, some clients (like Plexamp) don't provide it
-    canTerminate: server.type !== 'plex' || !!processed.plexSessionId,
+    canTerminate: canTerminate(server.type, processed),
   };
 }
 
@@ -311,8 +316,8 @@ export function buildPendingActiveSession(pendingData: PendingSessionData): Acti
     mediaType: processed.mediaType,
     mediaTitle: processed.mediaTitle,
     grandparentTitle: processed.grandparentTitle || null,
-    seasonNumber: processed.mediaType === 'episode' ? processed.seasonNumber : null,
-    episodeNumber: processed.mediaType === 'episode' ? processed.episodeNumber : null,
+    seasonNumber: processed.seasonNumber,
+    episodeNumber: processed.episodeNumber,
     year: processed.year || null,
     thumbPath: processed.thumbPath || null,
     ratingKey: processed.ratingKey || null,
@@ -359,6 +364,7 @@ export function buildPendingActiveSession(pendingData: PendingSessionData): Acti
     geoAsnNumber: geo.asnNumber,
     geoAsnOrganization: geo.asnOrganization,
     isLocal: withLocalFlag(geo, processed.ipAddress).isLocal,
+    profileName: processed.profileName ?? null,
     playerName: processed.playerName,
     deviceId: processed.deviceId || null,
     product: processed.product || null,
@@ -395,7 +401,7 @@ export function buildPendingActiveSession(pendingData: PendingSessionData): Acti
     server: { id: server.id, name: server.name, type: server.type },
 
     // Termination capability
-    canTerminate: server.type !== 'plex' || !!processed.plexSessionId,
+    canTerminate: canTerminate(server.type, processed),
 
     // Unconfirmed; excludeUncountableSessions drops this from rule evaluation
     pending: true,
@@ -408,7 +414,8 @@ export function buildPendingActiveSession(pendingData: PendingSessionData): Acti
 
 /**
  * Find an active (not stopped) session by SessionIdentity.
- * When ratingKey is provided and non-null, validates the session has matching ratingKey.
+ * When ratingKey is given, validates the session has matching ratingKey. An empty one is a read
+ * that did not describe its media, which says nothing about which item the open row plays.
  */
 export async function findActiveSession(
   identity: SessionIdentity
@@ -425,8 +432,7 @@ export async function findActiveSession(
     gte(sessions.startedAt, chunkBound),
   ];
 
-  // Add ratingKey validation if provided and non-null
-  if (ratingKey != null) {
+  if (ratingKey) {
     conditions.push(eq(sessions.ratingKey, ratingKey));
   }
 
@@ -849,8 +855,8 @@ export async function createSessionWithRulesAtomic(
               mediaType: processed.mediaType,
               mediaTitle: processed.mediaTitle,
               grandparentTitle: processed.grandparentTitle || null,
-              seasonNumber: processed.mediaType === 'episode' ? processed.seasonNumber : null,
-              episodeNumber: processed.mediaType === 'episode' ? processed.episodeNumber : null,
+              seasonNumber: processed.seasonNumber,
+              episodeNumber: processed.episodeNumber,
               year: processed.year || null,
               thumbPath: processed.thumbPath || null,
               startedAt: new Date(),
@@ -873,6 +879,7 @@ export async function createSessionWithRulesAtomic(
               geoAsnNumber: geo.asnNumber,
               geoAsnOrganization: geo.asnOrganization,
               isLocal: geo.isLocal,
+              profileName: processed.profileName ?? null,
               playerName: processed.playerName,
               deviceId: processed.deviceId || null,
               product: processed.product || null,
@@ -1116,6 +1123,26 @@ export async function confirmAndPersistSession(
 // ============================================================================
 
 /**
+ * The watched threshold of the server the session played on, so every stop path reads one rule.
+ * The server list is the poller's short cache; when it cannot be read the stop falls back to
+ * Tracearr's setting, as before the server's rule existed, and still reaches its retry loop.
+ */
+async function stopWatchedThreshold(session: typeof sessions.$inferSelect): Promise<number> {
+  let server: { type: ServerType; watchedRulePercent: number | null } | undefined;
+  try {
+    server = (await getCachedServers()).find((row) => row.id === session.serverId);
+  } catch (error) {
+    console.error(
+      `[SessionLifecycle] Could not read the server of session ${session.id} for its watched rule:`,
+      error
+    );
+  }
+  return server
+    ? serverWatchedThreshold(server, session.mediaType)
+    : getWatchedThreshold(session.mediaType);
+}
+
+/**
  * Stop a session atomically. Returns wasUpdated=false if already stopped.
  * Implements bounded retry logic for transient DB failures.
  */
@@ -1148,7 +1175,7 @@ export async function stopSessionAtomic(input: SessionStopInput): Promise<Sessio
         durationMs,
         session.progressMs,
         session.totalDurationMs,
-        await getWatchedThreshold(session.mediaType)
+        await stopWatchedThreshold(session)
       );
 
   const shortSession = !shouldRecordSession(durationMs);

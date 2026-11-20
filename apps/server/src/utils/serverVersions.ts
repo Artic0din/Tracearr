@@ -1,9 +1,10 @@
 /**
  * Media-server versions: what a server reports about itself, what its vendor ships,
- * and which of the two is newer. Every feed is public and read without a token.
+ * and which of the two is newer. Every feed is public and read without a token; tofa
+ * publishes none, so its servers are asked through their own update check instead.
  */
 
-import type { ServerType } from '@tracearr/shared';
+import { assertNever, type ServerType, type JellyfinEmbyServerType } from '@tracearr/shared';
 import { fetchJson } from './http.js';
 import { createLogger } from './logger.js';
 import { compareVersions, maxVersion } from './pluginVersion.js';
@@ -11,7 +12,7 @@ import { compareVersions, maxVersion } from './pluginVersion.js';
 const logger = createLogger('server-versions');
 
 const PLEX_DOWNLOADS_URL = 'https://plex.tv/api/downloads/5.json';
-const GITHUB_LATEST: Record<'jellyfin' | 'emby', string> = {
+const GITHUB_LATEST: Record<JellyfinEmbyServerType, string> = {
   jellyfin: 'https://api.github.com/repos/jellyfin/jellyfin/releases/latest',
   emby: 'https://api.github.com/repos/MediaBrowser/Emby.Releases/releases/latest',
 };
@@ -21,8 +22,12 @@ export const SERVER_RELEASE_PAGES: Record<ServerType, string> = {
   plex: 'https://plex.tv/media-server-downloads',
   jellyfin: 'https://github.com/jellyfin/jellyfin/releases/latest',
   emby: 'https://github.com/MediaBrowser/Emby.Releases/releases/latest',
+  tofa: 'https://docs.tofa.tv/keep-your-server-updated.html',
   silo: 'https://github.com/Silo-Server/silo-server/releases',
 };
+
+/** Server types whose vendor publishes a release feed. */
+export type FeedServerType = Exclude<ServerType, 'tofa' | 'silo'>;
 
 const FEED_TIMEOUT_MS = 10_000;
 // Two to four parts. `compareVersions` only reads three- and four-part versions, so a
@@ -34,16 +39,28 @@ interface PlexDownloads {
   computer?: Record<string, { version?: unknown } | undefined>;
 }
 
+function versionDigits(type: ServerType, version: string): string {
+  switch (type) {
+    case 'plex':
+      return version.split('-')[0] ?? '';
+    case 'jellyfin':
+      return version.replace(/^v/, '');
+    case 'emby':
+    case 'tofa':
+    case 'silo':
+      return version;
+    default:
+      return assertNever(type);
+  }
+}
+
 /**
  * The comparable digits of a version: Plex appends a build hash, Jellyfin tags with a
- * leading `v`, Emby is already numeric. A two-part version gains a `.0` so the
+ * leading `v`, Emby and tofa are already numeric. A two-part version gains a `.0` so the
  * comparator can read it. Null when what is left is not two to four dotted numbers.
  */
 export function normalizeServerVersion(type: ServerType, raw: string): string | null {
-  const trimmed = raw.trim();
-  let candidate = trimmed;
-  if (type === 'plex') candidate = trimmed.split('-')[0] ?? '';
-  if (type === 'jellyfin') candidate = trimmed.replace(/^v/, '');
+  const candidate = versionDigits(type, raw.trim());
   if (!DOTTED.test(candidate)) return null;
   return candidate.split('.').length === 2 ? `${candidate}.0` : candidate;
 }
@@ -70,7 +87,7 @@ async function latestPlexVersion(): Promise<string | null> {
   return maxVersion(versions);
 }
 
-async function latestGithubVersion(type: 'jellyfin' | 'emby'): Promise<string | null> {
+async function latestGithubVersion(type: JellyfinEmbyServerType): Promise<string | null> {
   const release = await fetchJson<{ tag_name?: unknown }>(GITHUB_LATEST[type], {
     timeout: FEED_TIMEOUT_MS,
     service: 'github',
@@ -81,12 +98,17 @@ async function latestGithubVersion(type: 'jellyfin' | 'emby'): Promise<string | 
 }
 
 /** The newest release the vendor publishes, normalized. Any failure reads as "unknown". */
-export async function latestVersionFor(type: ServerType): Promise<string | null> {
+export async function latestVersionFor(type: FeedServerType): Promise<string | null> {
   try {
-    if (type === 'plex') return await latestPlexVersion();
-    // Silo reports a commit hash, not a release number, so there is nothing to compare.
-    if (type === 'silo') return null;
-    return await latestGithubVersion(type);
+    switch (type) {
+      case 'plex':
+        return await latestPlexVersion();
+      case 'jellyfin':
+      case 'emby':
+        return await latestGithubVersion(type);
+      default:
+        return assertNever(type);
+    }
   } catch (error) {
     // A firewalled or renamed feed is otherwise invisible: the nudge just never comes.
     logger.warn('Latest version lookup failed', { type, error });

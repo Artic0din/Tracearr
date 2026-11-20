@@ -8,6 +8,7 @@
  * - Request timeout support
  */
 
+import { isServerType } from '@tracearr/shared';
 import { ExternalServiceError } from './errors.js';
 
 /**
@@ -47,19 +48,14 @@ export class HttpClientError extends Error {
    * Convert to ExternalServiceError for known services
    */
   toExternalServiceError(): ExternalServiceError | this {
-    if (
-      this.service === 'plex' ||
-      this.service === 'jellyfin' ||
-      this.service === 'emby' ||
-      this.service === 'geoip'
-    ) {
+    if (isServerType(this.service) || this.service === 'geoip') {
       return new ExternalServiceError(this.service, this.message);
     }
     return this;
   }
 }
 
-export function isHttpStatus(error: unknown, ...statuses: number[]): boolean {
+export function isHttpStatus(error: unknown, ...statuses: number[]): error is HttpClientError {
   return error instanceof HttpClientError && statuses.includes(error.statusCode);
 }
 

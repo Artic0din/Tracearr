@@ -63,7 +63,7 @@
     "item": "",
     "noData": "",
     "system": "Système",
-    "waiting": "En attende des statistiques du serveur"
+    "waiting": "En attende des statistiques du serveur..."
   },
   "notifications": {
     "testSent": "Test envoyé",
@@ -133,6 +133,7 @@
     "noTerminations": "Aucune interruption de lecture",
     "lastSeen": "Vu la dernière fois {{relative}}",
     "terminatedBy": "Par @{{username}}",
+    "terminatedByName": "",
     "trustScoreConfirm": "Régler le score de confiance de @{{username}} à {{score}} ?",
     "trustScoreRange": "",
     "moreLocations_one": "",

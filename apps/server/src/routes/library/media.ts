@@ -106,6 +106,9 @@ function toAvailabilityEntry(r: AvailabilityRow): MediaAvailabilityEntry {
     libraryId: r.library_id,
     libraryName: r.library_name,
     ratingKey: r.rating_key,
+    showRatingKey: r.show_rating_key ?? null,
+    seasonNumber: r.season_number ?? null,
+    episodeNumber: r.episode_number ?? null,
     addedAt: new Date(r.added_at).toISOString(),
     removedAt: r.removed_at ? new Date(r.removed_at).toISOString() : null,
     videoResolution: r.video_resolution,
@@ -176,8 +179,9 @@ function toWatcherEntry(r: MediaWatcherRow): MediaWatcherEntry {
       userId: r.user.user_id,
       serverId: r.user.server_id,
       username: r.user.username,
-      identityName: r.user.identity_name,
+      identityName: r.user.person_name,
       thumb: r.user.thumb,
+      thumbServerId: r.user.thumb_server_id,
     },
     plays: r.plays,
     watchTimeMs: r.watch_time_ms,
@@ -486,8 +490,8 @@ export const libraryMediaRoute: FastifyPluginAsync = async (app) => {
     const scope = await buildMediaScope(canonical);
     if (!scope) return reply.notFound();
 
-    // watchers-v2: rows gained user thumb/serverId for avatars
-    const cacheKey = mediaCacheKey(canonical.id, `watchers-v2:${windowKey}`, resolvedIds);
+    // watchers-v3: rows gained the picture's own server
+    const cacheKey = mediaCacheKey(canonical.id, `watchers-v3:${windowKey}`, resolvedIds);
     const cached = await readCache<MediaWatchersResponse>(app.redis, cacheKey);
     if (cached) return ownWatchers(cached, request.scope);
 

@@ -7,7 +7,7 @@
 
 import type { Redis } from 'ioredis';
 import { sql } from 'drizzle-orm';
-import { REDIS_KEYS } from '@tracearr/shared';
+import { REDIS_KEYS, assertNever } from '@tracearr/shared';
 import { db, type Executor } from '../../db/client.js';
 import { ruleActionResults } from '../../db/schema.js';
 import { readSessionRow } from '../../db/sessions/row.js';
@@ -20,6 +20,9 @@ import {
   type ActionResult,
 } from './executors/index.js';
 import { convertLegacyRule, type LegacyRuleType } from './migration.js';
+
+/** tofa has no endpoint that shows a viewer a message without stopping the stream. */
+export const TOFA_MESSAGE_UNAVAILABLE = 'tofa can only show a message when it stops a stream';
 
 // ============================================================================
 // Action Result Storage
@@ -174,7 +177,8 @@ export function createActionExecutorDeps(redis: Redis): ActionExecutorDeps {
 
     /**
      * Send a message to the client device.
-     * Plex does not support client messaging - only Jellyfin/Emby do.
+     * Plex does not support client messaging - only Jellyfin/Emby do. A tofa target fails the
+     * action with the reason, so the run records it as not done.
      */
     sendClientMessage: async (sessionId, message, startedAt) => {
       const session = await readSessionRow(sessionId, startedAt, (where) =>
@@ -191,26 +195,35 @@ export function createActionExecutorDeps(redis: Redis): ActionExecutorDeps {
         return { skipReason: 'server_historical' };
       }
 
-      // Plex doesn't support client messaging
-      if (session.server.type === 'plex') {
-        automationsLogger.debug('Skipping message_client for Plex (not supported)', { sessionId });
-        return undefined;
+      switch (session.server.type) {
+        case 'plex':
+          automationsLogger.debug('Skipping message_client for Plex (not supported)', {
+            sessionId,
+          });
+          return undefined;
+        case 'jellyfin':
+        case 'emby': {
+          // Dynamic import to avoid circular dependency
+          const { createJellyfinEmbyClient } = await import('../mediaServer/index.js');
+          const client = createJellyfinEmbyClient(session.server.type, {
+            url: session.server.url,
+            token: session.server.token,
+          });
+          // Jellyfin and Emby sessions store the server's Session.Id as sessionKey
+          await client.sendMessage(session.sessionKey, message, 'Tracearr', 10000);
+          automationsLogger.debug('Client message sent', { sessionId, message });
+          return undefined;
+        }
+        case 'tofa':
+          throw new Error(TOFA_MESSAGE_UNAVAILABLE);
+        case 'silo':
+          automationsLogger.debug('Skipping message_client for Silo (not supported)', {
+            sessionId,
+          });
+          return undefined;
+        default:
+          return assertNever(session.server.type);
       }
-
-      // Dynamic import to avoid circular dependency
-      const { createMediaServerClient } = await import('../mediaServer/index.js');
-      const client = createMediaServerClient({
-        type: session.server.type,
-        url: session.server.url,
-        token: session.server.token,
-      });
-
-      // Jellyfin/Emby use sessionKey for API calls
-      if ('sendMessage' in client && typeof client.sendMessage === 'function') {
-        await client.sendMessage(session.sessionKey, message, 'Tracearr', 10000);
-        automationsLogger.debug('Client message sent', { sessionId, message });
-      }
-      return undefined;
     },
 
     /**

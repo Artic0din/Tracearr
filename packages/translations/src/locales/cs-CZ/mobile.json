@@ -139,6 +139,7 @@
     "noTerminations": "",
     "lastSeen": "",
     "terminatedBy": "",
+    "terminatedByName": "",
     "trustScoreConfirm": "",
     "trustScoreRange": "",
     "moreLocations_one": "",
@@ -204,7 +205,7 @@
   },
   "activity": {
     "playsOverTime": "Přehrání v průběhu času",
-    "concurrentStreams": "",
+    "concurrentStreams": "Souběžné streamy",
     "platforms": "Platformy",
     "playbackQuality": ""
   },

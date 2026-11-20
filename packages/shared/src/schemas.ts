@@ -6,15 +6,13 @@ import { z } from 'zod';
 import { LOGIN_ACCESS, isValidTimezone } from './constants.js';
 import { listDateBoundSchema, listSortSchema } from './listQuery.js';
 import { PLAYBACK_DECISIONS } from './playbackDecision.js';
+import { SERVER_TYPES, assertNever } from './serverTypes.js';
 
 // ============================================================================
 // Shared Enum Constants
 // ============================================================================
 
-/** Server types supported by Tracearr */
-const SERVER_TYPES = ['plex', 'jellyfin', 'emby', 'silo'] as const;
 export const serverTypeSchema = z.enum(SERVER_TYPES);
-export type ServerType = z.infer<typeof serverTypeSchema>;
 
 /** Media types for content filtering */
 const MEDIA_TYPES = ['movie', 'episode', 'track', 'live'] as const;
@@ -179,7 +177,7 @@ const permissiveUrlSchema = z.string().refine(
   { message: 'Invalid URL. Must start with http:// or https:// followed by a hostname' }
 );
 
-export const PUBLIC_URL_PLEX_MESSAGE = 'Public address applies to Jellyfin and Emby servers only';
+export const PUBLIC_URL_PLEX_MESSAGE = 'Plex servers take no public address';
 
 /** Same rules as externalUrl, except a bare host gets https: the address leaves the LAN. Empty clears it. */
 export const publicUrlSchema = z.preprocess((val) => {
@@ -201,10 +199,22 @@ export const createServerSchema = z
     token: z.string().min(1),
     publicUrl: publicUrlSchema.optional(),
   })
-  .refine((data) => data.type !== 'plex' || data.publicUrl == null, {
-    message: PUBLIC_URL_PLEX_MESSAGE,
-    path: ['publicUrl'],
-  });
+  .refine(
+    (data) => {
+      switch (data.type) {
+        case 'plex':
+          return data.publicUrl == null;
+        case 'jellyfin':
+        case 'emby':
+        case 'tofa':
+        case 'silo':
+          return true;
+        default:
+          return assertNever(data.type);
+      }
+    },
+    { message: PUBLIC_URL_PLEX_MESSAGE, path: ['publicUrl'] }
+  );
 
 /** Body of the Jellyfin and Emby connect-api-key routes, which are how the add dialog creates those servers. */
 export const apiKeyConnectSchema = z.object({
@@ -888,7 +898,13 @@ const nullableStringSchema = (maxLength?: number) =>
 // Settings schemas
 export const updateSettingsSchema = z.object({
   loginMethods: z
-    .object({ local: z.boolean(), plex: z.boolean(), oidc: z.boolean(), member: z.boolean() })
+    .object({
+      local: z.boolean(),
+      plex: z.boolean(),
+      oidc: z.boolean(),
+      tofa: z.boolean(),
+      member: z.boolean(),
+    })
     .partial()
     .optional(),
   // Display preferences
@@ -935,6 +951,8 @@ export const updateSettingsSchema = z.object({
   preferredPosterServerId: z.uuid().nullable().optional(),
   // Members see anonymous counts of other people's activity
   memberServerActivity: z.boolean().optional(),
+  // Admins and members sign in only through SSO
+  memberSsoOnly: z.boolean().optional(),
 });
 
 // ============================================================================
@@ -1120,6 +1138,10 @@ export const playbackReportingImportSchema = z.object({
 });
 
 export const playbackReportingTestSchema = z.object({
+  serverId: uuidSchema,
+});
+
+export const tofaImportSchema = z.object({
   serverId: uuidSchema,
 });
 

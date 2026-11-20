@@ -51,8 +51,11 @@ vi.mock('../automations/events/producers.js', () => ({
 }));
 
 import type { Redis } from 'ioredis';
+import type { ServerType } from '@tracearr/shared';
 import { LibrarySyncService, initLibrarySyncRedis } from '../librarySync.js';
 import { createMediaServerClient } from '../mediaServer/index.js';
+import { NOT_NEEDED } from '../mediaServer/types.js';
+import { fakeEmbyClient, fakeJellyfinClient, fakePlexClient } from '../../test/mediaServerFakes.js';
 import { db } from '../../db/client.js';
 
 const mockCreateClient = vi.mocked(createMediaServerClient);
@@ -75,7 +78,7 @@ function makeMockRedis(): Redis {
 function setupDbSelectMocks(mockServer: {
   id: string;
   name: string;
-  type: 'plex' | 'jellyfin' | 'emby';
+  type: ServerType;
   url: string;
   token: string;
 }) {
@@ -143,15 +146,21 @@ function setupDbSelectMocks(mockServer: {
   });
 }
 
+const fakeClients = { plex: fakePlexClient, jellyfin: fakeJellyfinClient, emby: fakeEmbyClient };
+
 function makeMockClient(
-  opts: { totalCount?: number; itemsSinceCount?: number; libraryType?: string } = {}
+  opts: {
+    totalCount?: number;
+    itemsSinceCount?: number;
+    libraryType?: string;
+    serverType?: keyof typeof fakeClients;
+  } = {}
 ) {
   const totalCount = opts.totalCount ?? 100;
   const itemsSinceCount = opts.itemsSinceCount ?? 0;
   const libraryType = opts.libraryType ?? 'movie';
 
-  return {
-    serverType: 'plex' as const,
+  return fakeClients[opts.serverType ?? 'plex']({
     getLibraries: vi.fn().mockResolvedValue([{ id: '1', name: 'Movies', type: libraryType }]),
     getLibraryItems: vi.fn().mockResolvedValue({ items: [], totalCount }),
     getLibraryItemsSince: vi.fn().mockResolvedValue({
@@ -164,14 +173,9 @@ function makeMockClient(
         fileSize: 1000000,
       })),
       totalCount: itemsSinceCount,
+      feed: NOT_NEEDED,
     }),
-    getLibraryLeavesSince: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
-    getLibraryLeaves: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
-    getSessions: vi.fn(),
-    getUsers: vi.fn(),
-    testConnection: vi.fn().mockResolvedValue(true),
-    terminateSession: vi.fn(),
-  };
+  });
 }
 
 const TEST_SERVER = {
@@ -242,7 +246,10 @@ describe('LibrarySyncService full-scan cycle', () => {
       expect(client.getLibraryItemsSince).toHaveBeenCalledTimes(1);
       expect(client.getLibraryLeavesSince).toHaveBeenCalledTimes(leafCalls);
       if (leafCalls > 0) {
-        expect(client.getLibraryLeavesSince).toHaveBeenCalledWith('1', lastSyncedAt);
+        expect(client.getLibraryLeavesSince).toHaveBeenCalledWith('1', {
+          kind: 'date',
+          since: lastSyncedAt,
+        });
       }
     }
   );
@@ -298,7 +305,7 @@ describe('LibrarySyncService full-scan cycle', () => {
     '$type library stored at scan version $stored gets one forced full scan',
     async ({ type, stored, current }) => {
       setupDbSelectMocks({ ...TEST_SERVER, type });
-      const client = makeMockClient({ totalCount: 100, itemsSinceCount: 5 });
+      const client = makeMockClient({ totalCount: 100, itemsSinceCount: 5, serverType: type });
       mockCreateClient.mockReturnValue(client);
 
       await mockRedis.set(
@@ -350,7 +357,7 @@ describe('LibrarySyncService full-scan cycle', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       const client = makeMockClient({ totalCount: 100 });
-      client.getLibraryItems.mockImplementation(async () => {
+      vi.mocked(client.getLibraryItems).mockImplementation(async () => {
         vi.setSystemTime(Date.now() + 60_000);
         return { items: [], totalCount: 100 };
       });

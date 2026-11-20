@@ -4,11 +4,17 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { and, isNotNull, isNull, eq } from 'drizzle-orm';
-import { setupStatusQuerySchema, type SetupStatus } from '@tracearr/shared';
+import {
+  SERVER_PROFILES,
+  assertNever,
+  setupStatusQuerySchema,
+  type ServerType,
+  type SetupStatus,
+} from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers, users } from '../db/schema.js';
 import { isClaimCodeEnabled } from '../utils/claimCode.js';
-import { openToMemberSignIn, usableLoginMethods } from '../lib/authGuards.js';
+import { mediaSignInClosed, openToMemberSignIn, usableLoginMethods } from '../lib/authGuards.js';
 import { JellyfinClient } from '../services/mediaServer/index.js';
 
 // The status route is public, so each hit must not become a request to every Jellyfin server.
@@ -21,6 +27,21 @@ async function quickConnectEnabled(url: string): Promise<boolean> {
   const enabled = await JellyfinClient.quickConnectEnabled(url);
   quickConnectCache.set(url, { enabled, checkedAt: Date.now() });
   return enabled;
+}
+
+/** Quick Connect is a Jellyfin feature; Plex and Emby have nothing like it. */
+async function offersQuickConnect(type: ServerType, url: string): Promise<boolean> {
+  switch (type) {
+    case 'jellyfin':
+      return quickConnectEnabled(url);
+    case 'plex':
+    case 'emby':
+    case 'tofa':
+    case 'silo':
+      return false;
+    default:
+      return assertNever(type);
+  }
 }
 
 export const setupRoutes: FastifyPluginAsync = async (app) => {
@@ -39,8 +60,9 @@ export const setupRoutes: FastifyPluginAsync = async (app) => {
   app.get('/status', async (request, reply): Promise<SetupStatus> => {
     const query = setupStatusQuerySchema.safeParse(request.query);
     if (!query.success) return reply.badRequest('Invalid query parameters');
-    // ?all only changes which servers the login page offers, never who gets in: every server
-    // someone could sign in through, including one only an Allow person can use.
+    // ?all only changes what the login page offers, never who gets in: every server someone could
+    // sign in through, including one only an Allow person can use, and the password and Plex
+    // sign-in that SSO-only hides.
     const all = query.data.all !== undefined;
 
     // Check for servers and users in parallel
@@ -53,9 +75,11 @@ export const setupRoutes: FastifyPluginAsync = async (app) => {
 
     const needsSetup = ownerList.length === 0;
 
-    const usable = await usableLoginMethods();
+    const [usable, mediaClosed] = await Promise.all([usableLoginMethods(), mediaSignInClosed()]);
+    // Hidden, not refused: an owner or admin whose identity provider is down signs in at ?all.
+    const ssoOnly = mediaClosed && usable.oidc && !needsSetup && !all;
     const loginServers =
-      all || usable.member
+      !mediaClosed && (all || usable.member)
         ? await db
             .select({ id: servers.id, name: servers.name, type: servers.type, url: servers.url })
             .from(servers)
@@ -66,13 +90,12 @@ export const setupRoutes: FastifyPluginAsync = async (app) => {
             )
             .orderBy(servers.displayOrder)
         : [];
-    // Silo has no member sign-in yet.
     const memberLoginServers = await Promise.all(
       loginServers
-        .filter((server) => server.type !== 'silo')
+        .filter((server) => SERVER_PROFILES[server.type].memberSignIn !== 'unavailable')
         .map(async ({ url, ...server }) => ({
           ...server,
-          quickConnect: server.type === 'jellyfin' && (await quickConnectEnabled(url)),
+          quickConnect: await offersQuickConnect(server.type, url),
         }))
     );
 
@@ -84,11 +107,13 @@ export const setupRoutes: FastifyPluginAsync = async (app) => {
       hasPasswordAuth: passwordUserList.length > 0,
       // needsSetup keeps first-run sign-up reachable before any owner exists.
       authMethods: {
-        local: needsSetup || usable.local,
-        plex: needsSetup || usable.plex,
+        local: needsSetup || (usable.local && !ssoOnly),
+        plex: needsSetup || (usable.plex && !ssoOnly),
         oidc: usable.oidc,
         oidcProviderName: usable.oidc ? (process.env.OIDC_PROVIDER_NAME ?? 'SSO') : null,
+        tofa: needsSetup || (usable.tofa && !ssoOnly),
         member: all ? loginServers.length > 0 : usable.member,
+        ssoOnly,
       },
       memberLoginServers,
     };

@@ -2,9 +2,7 @@
   "login": {
     "title": "Tracearr",
     "tagline": "Tracearr - Управление доступом потока",
-    "createAccountHeading": "Создайте свой аккаунт, чтобы начать",
     "signInHeading": "Войдите в свою учетную запись",
-    "createAccountDescription": "Создайте учетную запись для управления медиа-серверами",
     "signInDescription": "Войдите, чтобы получить доступ к панели управления",
     "selectPlexServer": "Выберите ваш Plex сервер",
     "waitingForPlex": "Ожидание авторизации Plex...",
@@ -19,7 +17,6 @@
     "displayNamePlaceholder": "Выберите отображаемое имя",
     "passwordPlaceholder": "Минимум 8 символов",
     "yourPasswordPlaceholder": "Ваш пароль",
-    "setupNote": "После создания учетной записи вы добавите свои Plex или Jellyfin серверы из настроек.",
     "localDisabledHint": "Локальный вход отключён на этом экземпляре. Попросите администратора выполнить `enable-local-login` в CLI Tracearr, чтобы снова его включить.",
     "oidcError": "Не удалось выполнить единый вход. Повторите попытку или выберите другой способ входа.",
     "accountCreated": "Учетная запись успешно создана!",
@@ -54,6 +51,60 @@
       "notPermitted": "У вас нет разрешения на вход. Обратитесь к владельцу сервера."
     }
   },
+  "setup": {
+    "serverTitle": "",
+    "connectTitle": "",
+    "connectDescription": "",
+    "linkPlexTitle": "",
+    "linkPlexDescription": "",
+    "stepsLabel": "",
+    "stepOfNamed": "",
+    "steps": {
+      "server": "",
+      "account": "",
+      "connect": "",
+      "import": ""
+    },
+    "stepStatus": {
+      "done": "",
+      "current": "",
+      "upcoming": ""
+    },
+    "signedInAs": "",
+    "serverHint": "",
+    "ownerTitle": "",
+    "ownerDescription": "",
+    "ownerDescriptionSignIn": "",
+    "plexWaitingDescription": "",
+    "pickerTitle": "",
+    "pickerDescription": "",
+    "connectHint": "",
+    "connectedTitle": "",
+    "connectedDescription": "",
+    "importTitle": "",
+    "importDescription": "",
+    "goToDashboard": "",
+    "codeExpired": "",
+    "signInAgain": "",
+    "timedOut": "",
+    "checkAgain": ""
+  },
+  "tofa": {
+    "signIn": "",
+    "waiting": "",
+    "waitingHint": "",
+    "waitingDescription": "",
+    "openAgain": "",
+    "expiresIn": "",
+    "codeFallback": "",
+    "pickerNote": "",
+    "unreachable": "",
+    "noAddress": "",
+    "noServersTitle": "",
+    "noServers": "",
+    "noServersPassword": "",
+    "manual": ""
+  },
   "dashboard": {
     "alerts": "Оповещения",
     "plays": "Просмотры",
@@ -66,6 +117,7 @@
     "noActiveStreams": "Нет активных потоков",
     "streamsAppearHere": "Активные потоки появятся здесь, когда пользователи начнут просматривать",
     "dayStreak": "Дней подряд",
+    "noServers": "",
     "view": {
       "label": "Вид панели",
       "admin": "Сервер",
@@ -90,9 +142,9 @@
         "availableThisWeek_other": "Стало доступно на этой неделе: {{count}}"
       },
       "link": {
-        "title": "",
-        "description": "",
-        "action": ""
+        "title": "Ваш аккаунт ещё не привязан",
+        "description": "Просмотры с вашего аккаунта Jellyfin или Emby записываются на отдельного человека, пока вы не привяжете аккаунт в строке этого сервера в настройках.",
+        "action": "Открыть настройки сервера"
       },
       "episodes_one": "{{count}} серия",
       "episodes_few": "{{count}} серии",
@@ -186,6 +238,7 @@
     "mergeTitleBulk": "Объединить этих пользователей?",
     "mergeReasonEmail": "У обоих адрес {{value}} в аккаунтах серверов.",
     "mergeReasonEmailUsername": "Оба используют {{value}} как имя пользователя или почту аккаунта.",
+    "mergeReasonLinked": "",
     "mergeReasonUsername": "У обоих имя пользователя {{value}}.",
     "mergeKeep": "Остаётся",
     "mergeFoldIn": "Вливается и удаляется",
@@ -212,12 +265,14 @@
     "suggestionsTitle": "Возможные дубликаты пользователей",
     "suggestionsPairEmail": "{{first}} и {{second}}: общий адрес почты",
     "suggestionsPairEmailUsername": "{{first}} и {{second}} используют один адрес как имя пользователя или почту аккаунта",
+    "suggestionsPairLinked": "",
     "suggestionsPairUsername": "{{first}} и {{second}}: одно имя пользователя",
     "suggestionsSheetDescription": "При объединении один пользователь остаётся, а другой удаляется. Пара, отмеченная как разные люди, больше не показывается, пока вы её не восстановите.",
     "suggestionsReview": "Проверить",
     "suggestionsNotSame": "Это разные люди",
     "suggestionsMatchEmail": "Один адрес почты",
     "suggestionsMatchEmailUsername": "Оба используют {{value}} как имя пользователя или почту аккаунта",
+    "suggestionsMatchLinked": "",
     "suggestionsMatchUsername": "Одно имя пользователя",
     "suggestionsEmpty": "Проверять больше нечего.",
     "suggestionsDismissed": "Отклонённые ({{count}})",
@@ -262,6 +317,10 @@
     "suggestionsPairEmailUsernameMore_few": "{{first}} и {{second}} используют один адрес как имя пользователя или почту аккаунта, и ещё {{count}}",
     "suggestionsPairEmailUsernameMore_many": "{{first}} и {{second}} используют один адрес как имя пользователя или почту аккаунта, и ещё {{count}}",
     "suggestionsPairEmailUsernameMore_other": "{{first}} и {{second}} используют один адрес как имя пользователя или почту аккаунта, и ещё {{count}}",
+    "suggestionsPairLinkedMore_one": "",
+    "suggestionsPairLinkedMore_few": "",
+    "suggestionsPairLinkedMore_many": "",
+    "suggestionsPairLinkedMore_other": "",
     "suggestionsPairUsernameMore_one": "{{first}} и {{second}}: одно имя пользователя, и ещё {{count}}",
     "suggestionsPairUsernameMore_few": "{{first}} и {{second}}: одно имя пользователя, и ещё {{count}}",
     "suggestionsPairUsernameMore_many": "{{first}} и {{second}}: одно имя пользователя, и ещё {{count}}",
@@ -421,6 +480,8 @@
     "stream": {
       "notAvailable": "Н/Д",
       "bitrateUnavailable": "Jellyfin и Emby не сообщают отдельные битрейты видео и аудио при транскодировании. Доступен только общий битрейт потока.",
+      "rebuffers": "",
+      "droppedFrames": "",
       "stereo": "Стерео",
       "mono": "Моно",
       "noDetails": "Нет подробных сведений о потоке",
@@ -611,7 +672,7 @@
         },
         "columns": {
           "hoursPerGb": "Часов/ГБ",
-          "lastWatched": ""
+          "lastWatched": "Последний просмотр"
         }
       },
       "matchBadge": {
@@ -635,16 +696,16 @@
       "watched": "Просмотрено",
       "totalWatchTime": "Общее время просмотра",
       "completed": "Выполнено",
-      "peakHour": "Пик час",
+      "peakHour": "Час пик",
       "viewingHours": "Часы просмотра",
       "peak": "Пик:",
-      "viewingTrend": "",
+      "viewingTrend": "Динамика просмотров",
       "busiest": "Максимум:",
-      "quietest": "Тихий тест:",
+      "quietest": "Минимум:",
       "bingeHighlights": "Лучшие марафоны",
       "bingeHighlightsDesc": "Сериалы с самым интенсивным просмотром.",
-      "consecutivePlays": "",
-      "noData": "Нет данных для просмотра",
+      "consecutivePlays": "Просмотры подряд",
+      "noData": "Данных о просмотрах пока нет",
       "noDataDesc": "Аналитика просмотров появится здесь после воспроизведения контента. Загляните сюда позже.",
       "failedToLoad": "Не удалось загрузить аналитику",
       "failedToLoadDesc": "Не удалось получить данные о просмотрах.",
@@ -654,8 +715,8 @@
           "show": "Сериал",
           "servers": "Серверы",
           "consecutive": "Подряд",
-          "people": "",
-          "episodesPerViewer": "",
+          "people": "Люди",
+          "episodesPerViewer": "Серий на зрителя",
           "maxPerDay": "Макс./день"
         },
         "empty": {
@@ -698,6 +759,10 @@
       "notSynced": {
         "title": "Библиотека ещё не синхронизирована",
         "body": "Статистика библиотеки появится здесь после её синхронизации. Обычно это происходит автоматически каждый час."
+      },
+      "syncQueued": {
+        "title": "",
+        "body": ""
       },
       "noMedia": {
         "title": "Фильмов и сериалов пока нет",
@@ -767,8 +832,8 @@
       "monthly": {
         "watchCount": "Просмотры",
         "empty": {
-          "title": "",
-          "description": ""
+          "title": "Нет данных о просмотрах",
+          "description": "Динамика просмотров появится здесь, когда накопятся данные"
         }
       },
       "growth": {
@@ -868,7 +933,7 @@
       "matched": "Соответствует {{matched}}/{{total}}",
       "actual": "Фактический",
       "actionResults": "Действия",
-      "relatedSessions_one": "Связанная с {{count}} сессия",
+      "relatedSessions_one": "{{count}} связанная сессия",
       "relatedSessions_few": "{{count}} связанные сессии",
       "relatedSessions_many": "{{count}} связанных сессий",
       "relatedSessions_other": "{{count}} связанные сессии"
@@ -1407,7 +1472,7 @@
         "sessionPaused": "поток приостановлен",
         "sessionHeldFor": "поток приостановлен уже {{duration}}",
         "sessionHeldForTotal": "поток приостановлен в сумме {{duration}}",
-        "sessionWatched": "",
+        "sessionWatched": "поток засчитан как просмотренный",
         "accountInactiveFor": "аккаунт неактивен уже {{duration}}",
         "accountNewDevice": "аккаунт воспроизводит с нового устройства",
         "accountTrustChanged": "меняется балл доверия аккаунта",
@@ -2182,8 +2247,8 @@
           "synonyms": "пауза, простой, брошен, завис, afk"
         },
         "sessionWatched": {
-          "description": "",
-          "synonyms": ""
+          "description": "Поток преодолевает порог просмотра, заданный в настройках для его типа медиа.",
+          "synonyms": "просмотрено, досмотрено, завершено, процент, прогресс, порог"
         },
         "accountInactiveFor": {
           "label": "Аккаунт затих",
@@ -2280,6 +2345,7 @@
   "terminateStream": {
     "title": "Завершить Поток",
     "stopMedia": "Остановить \"{{mediaTitle}}\" для @{{username}}?",
+    "stopMediaFor": "",
     "messageLabel": "Сообщение пользователю (необязательно)",
     "messagePlaceholder": "например, пожалуйста, не делитесь своей учетной записью",
     "messageHint": "Это сообщение будет показано им во время воспроизведения",
@@ -2305,7 +2371,7 @@
         "reset": "Подключение сброшено",
         "tls": "Ошибка TLS",
         "http": "HTTP {{status}}",
-        "relay": "",
+        "relay": "Ретранслятор Plex",
         "unknown": "Не удалось подключиться"
       },
       "connectionsReachable": "{{reachable}} соединений {{total}} доступно",
@@ -2595,7 +2661,7 @@
   },
   "statsUsers": {
     "noActivity": "Нет активности",
-    "noActivityDesc": "Начните поток, чтобы увидеть ваших топ пользователей здесь",
+    "noActivityDesc": "Начните смотреть, и здесь появятся самые активные пользователи.",
     "rankBy": "Ранжировать по",
     "rank": {
       "hours": "Часы",
@@ -3050,7 +3116,7 @@
         "libraryAll": "Любая библиотека",
         "yearFromLabel": "С года",
         "yearToLabel": "По год",
-        "addedLabel": "",
+        "addedLabel": "Добавлено",
         "sizeGbMinLabel": "Мин. размер (ГБ)",
         "sizeGbMaxLabel": "Макс. размер (ГБ)",
         "sizeChipAtLeast": "≥ {{min}} ГБ",

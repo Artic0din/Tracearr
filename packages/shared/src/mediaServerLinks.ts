@@ -1,26 +1,37 @@
 /**
  * Deep links to a single item in a media server's own web client. Formats
- * verified against Plex 1.43.3, Emby 4.9.5.0 and Jellyfin 12.0.0, which agree
- * on nothing: Plex routes through app.plex.tv (a LAN URL is useless to remote
- * users) and needs machineIdentifier, Emby needs `#!` and a serverId or the
- * page 404s, Jellyfin needs a bare `#` and the item id alone.
+ * verified against Plex 1.43.3, Emby 4.9.5.0, Jellyfin 12.0.0 and tofa 0.13.3,
+ * which agree on nothing: Plex routes through app.plex.tv (a LAN URL is useless
+ * to remote users) and needs machineIdentifier, Emby needs `#!` and a serverId
+ * or the page 404s, Jellyfin needs a bare `#` and the item id alone, tofa routes
+ * through app.tofa.tv with a plain `/media/<id>` path and no server in the URL,
+ * so the link opens on the server the member last chose there. tofa has a page
+ * only for a movie or a show; a season or episode is the show's page with
+ * `?season=<number>` and `&episode=<number>`.
  *
  * Null means a required identifier is missing; link to the server root.
  */
 
-import type { ServerType } from './types.js';
+import { assertNever, type ServerType } from './serverTypes.js';
 
 export interface MediaServerItemLinkInput {
   serverType: ServerType;
-  /** Server URL as configured in Tracearr. Ignored for Plex. */
+  /** Server URL as configured in Tracearr. Ignored for Plex and tofa. */
   baseUrl: string;
-  /** Item id on that server: Plex ratingKey, Emby/Jellyfin item id. */
+  /** Item id on that server: Plex ratingKey, Emby/Jellyfin item id, tofa media, season or episode id. */
   ratingKey: string;
+  mediaType?: string;
+  /** The show an episode or season belongs to, when known. */
+  showRatingKey?: string | null;
+  /** On an episode or a season. */
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
   /** The media server's own id, not Tracearr's server row id. */
   machineIdentifier?: string | null;
 }
 
 const PLEX_APP_BASE = 'https://app.plex.tv/desktop';
+const TOFA_APP_BASE = 'https://app.tofa.tv';
 
 function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '');
@@ -30,6 +41,10 @@ export function buildMediaServerItemUrl({
   serverType,
   baseUrl,
   ratingKey,
+  mediaType,
+  showRatingKey,
+  seasonNumber,
+  episodeNumber,
   machineIdentifier,
 }: MediaServerItemLinkInput): string | null {
   if (!ratingKey) return null;
@@ -51,8 +66,24 @@ export function buildMediaServerItemUrl({
       if (!root) return null;
       return `${root}/web/index.html#/details?id=${encodeURIComponent(ratingKey)}`;
     }
-    default:
+    case 'tofa': {
+      const withinShow = mediaType === 'episode' || mediaType === 'season';
+      const page = withinShow ? showRatingKey : ratingKey;
+      if (!page) return null;
+      const query = new URLSearchParams();
+      if (withinShow && seasonNumber != null) {
+        query.set('season', String(seasonNumber));
+        if (mediaType === 'episode' && episodeNumber != null) {
+          query.set('episode', String(episodeNumber));
+        }
+      }
+      const url = `${TOFA_APP_BASE}/media/${encodeURIComponent(page)}`;
+      return query.size > 0 ? `${url}?${query.toString()}` : url;
+    }
+    case 'silo':
       return null;
+    default:
+      return assertNever(serverType);
   }
 }
 

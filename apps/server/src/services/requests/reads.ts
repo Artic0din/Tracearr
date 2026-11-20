@@ -9,6 +9,7 @@ import type {
   MediaRequestMediaType,
   MediaRequestStatus,
   RequestSeason,
+  RequestServiceType,
   UserRequestEntry,
   UserRequestsResponse,
   WatchedState,
@@ -16,6 +17,7 @@ import type {
 import { db } from '../../db/client.js';
 import { scopedServerFragment, seesServerActivity, type Scope } from '../../lib/scope.js';
 import { uuidArraySql } from '../../utils/sqlArrays.js';
+import { personPictureJoinSql } from '../../utils/representativeAccount.js';
 import { buildMultiServerFragment } from '../../utils/serverFiltering.js';
 import { buildPosterOrderFragment } from '../../routes/library/catalog.js';
 import { buildPosterUrl } from '../imageProxy.js';
@@ -60,17 +62,21 @@ interface RequestBaseRow {
 }
 
 interface MediaRequestSqlRow extends RequestBaseRow {
+  service_type: RequestServiceType;
   remote_username: string;
   server_user_id: string | null;
   user_server_id: string | null;
   username: string | null;
   identity_name: string | null;
   thumb: string | null;
+  thumb_server_id: string | null;
 }
 
 interface UserRequestSqlRow extends RequestBaseRow {
+  service_id: string;
   title: string | null;
   year: number | null;
+  poster_path: string | null;
   poster_server_id: string | null;
   poster_thumb_path: string | null;
 }
@@ -162,17 +168,20 @@ export async function listMediaRequests(args: ListMediaRequestsArgs): Promise<Me
       mr.seasons,
       mr.is_4k,
       mr.is_auto_request,
+      rs.type AS service_type,
       mr.remote_username,
       mr.server_user_id,
       su.user_id AS lens_user_id,
       su.server_id AS user_server_id,
       su.username,
-      u.name AS identity_name,
-      COALESCE(u.thumbnail, su.thumb_url) AS thumb
+      COALESCE(u.name, u.username) AS identity_name,
+      u.thumbnail AS thumb,
+      pic.server_id AS thumb_server_id
     FROM media_requests mr
     JOIN request_services rs ON rs.id = mr.service_id
     LEFT JOIN server_users su ON su.id = mr.server_user_id
     LEFT JOIN users u ON u.id = su.user_id
+    ${personPictureJoinSql()}
     WHERE ${scopeFilter(scope)} ${authFragment}
     ORDER BY mr.requested_at, mr.id
   `);
@@ -182,6 +191,7 @@ export async function listMediaRequests(args: ListMediaRequestsArgs): Promise<Me
 
   return rows.map((row) => ({
     ...baseEntry(row, states.get(row.id) ?? UNWATCHED_LENSES, showOthers),
+    serviceType: row.service_type,
     requester: row.server_user_id
       ? {
           serverUserId: row.server_user_id,
@@ -190,6 +200,7 @@ export async function listMediaRequests(args: ListMediaRequestsArgs): Promise<Me
           username: row.username,
           identityName: row.identity_name,
           thumb: row.thumb,
+          thumbServerId: row.thumb_server_id,
         }
       : {
           serverUserId: null,
@@ -198,6 +209,7 @@ export async function listMediaRequests(args: ListMediaRequestsArgs): Promise<Me
           username: row.remote_username,
           identityName: null,
           thumb: null,
+          thumbServerId: null,
         },
   }));
 }
@@ -227,8 +239,10 @@ export async function listUserRequests(args: ListUserRequestsArgs): Promise<User
         rs.server_id,
         mr.media_id,
         mr.media_type,
+        mr.service_id,
         mr.title,
         mr.year,
+        mr.poster_path,
         mr.status,
         mr.requested_at,
         mr.available_at,
@@ -324,7 +338,9 @@ export async function listUserRequests(args: ListUserRequestsArgs): Promise<User
       title: row.title,
       year: row.year,
       mediaType: row.media_type,
-      posterUrl: buildPosterUrl(row.poster_server_id, row.poster_thumb_path),
+      posterUrl:
+        buildPosterUrl(row.poster_server_id, row.poster_thumb_path) ??
+        buildPosterUrl(row.service_id, row.poster_path),
     },
   }));
 

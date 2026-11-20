@@ -9,6 +9,7 @@ vi.mock('../../../../utils/http.js', async (importActual) => {
 import { fetchJson, HttpClientError } from '../../../../utils/http.js';
 import { SiloClient } from '../client.js';
 import { createMediaServerClient } from '../../index.js';
+import { NOT_NEEDED } from '../../types.js';
 
 const mockFetchJson = vi.mocked(fetchJson);
 const URL = 'http://silo.local:8091';
@@ -144,12 +145,13 @@ describe('SiloClient', () => {
     const client = new SiloClient({ url: URL, token: 'k' });
 
     await expect(
-      client.getLibraryItemsSince('2', since, { libraryType: 'tvshows' })
+      client.getLibraryItemsSince('2', { kind: 'date', since }, { libraryType: 'tvshows' })
     ).resolves.toEqual({
       items: [],
       totalCount: 0,
+      feed: NOT_NEEDED,
     });
-    const leaves = await client.getLibraryLeavesSince('2', since);
+    const leaves = await client.getLibraryLeavesSince('2', { kind: 'date', since });
     expect(leaves.totalCount).toBe(1);
     expect(leaves.items[0]?.ratingKey).toBe('ep-9');
   });
@@ -172,6 +174,35 @@ describe('SiloClient', () => {
     const client = new SiloClient({ url: URL, token: 'k' });
     await expect(client.getServerIdentity()).resolves.toBe('srv-1');
     await expect(client.getSoftwareVersion()).resolves.toBe('a5294117');
+  });
+
+  it('confirms existing rating keys from the cached catalog listing', async () => {
+    respond({
+      '/admin/catalog/items?library_id=1&type=movie&limit=200': {
+        items: [movie('a'), movie('b')],
+        page: { has_more: false },
+      },
+    });
+    const client = new SiloClient({ url: URL, token: 'k' });
+
+    await client.getLibraryItems('1', { libraryType: 'movies' });
+    const existing = await client.findExistingRatingKeys(['a', 'missing'], {
+      id: '1',
+      type: 'movies',
+    });
+
+    expect(existing).toEqual(new Set(['a']));
+    expect(mockFetchJson).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports unsupported library operations as NOT_NEEDED', async () => {
+    const client = new SiloClient({ url: URL, token: 'k' });
+    await expect(client.getLibraryRevision()).resolves.toBe(NOT_NEEDED);
+    await expect(client.getLibrarySeasons()).resolves.toBe(NOT_NEEDED);
+    await expect(client.getLibrarySeasonsSince()).resolves.toBe(NOT_NEEDED);
+    await expect(client.getLibraryAlbums()).resolves.toBe(NOT_NEEDED);
+    await expect(client.getLibraryAlbumsSince()).resolves.toBe(NOT_NEEDED);
+    await expect(client.checkFilesExist()).resolves.toBe(NOT_NEEDED);
   });
 });
 

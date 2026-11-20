@@ -18,6 +18,7 @@ import { db } from '../db/client.js';
 import { users, serverUsers, serverUserExternalAliases, automationRuns } from '../db/schema.js';
 import { clearScope } from '../lib/scope.js';
 import { NotFoundError } from '../utils/errors.js';
+import { personNameColumn, representativeAccountOrderSql } from '../utils/representativeAccount.js';
 import { violationAliasConditions } from './automations/aliasFilter.js';
 
 // Type for user identity table row
@@ -181,9 +182,8 @@ export async function getServerUserByUsername(
 }
 
 /**
- * Batch-resolve display names for server-user IDs.
- * Single query: serverUsers LEFT JOIN users WHERE id IN (...).
- * Returns id → (identityName ?? username). Safe to call with empty array.
+ * Batch-resolve the person's name behind each server-user ID, never the account's.
+ * Single query: serverUsers LEFT JOIN users WHERE id IN (...). Safe to call with empty array.
  */
 export async function getServerUserDisplayNames(ids: string[]): Promise<Record<string, string>> {
   if (ids.length === 0) return {};
@@ -192,8 +192,7 @@ export async function getServerUserDisplayNames(ids: string[]): Promise<Record<s
   const rows = await db
     .select({
       id: serverUsers.id,
-      username: serverUsers.username,
-      identityName: users.name,
+      name: personNameColumn(),
     })
     .from(serverUsers)
     .leftJoin(users, eq(serverUsers.userId, users.id))
@@ -201,7 +200,7 @@ export async function getServerUserDisplayNames(ids: string[]): Promise<Record<s
 
   const result: Record<string, string> = {};
   for (const row of rows) {
-    result[row.id] = row.identityName ?? row.username;
+    result[row.id] = row.name;
   }
   return result;
 }
@@ -412,7 +411,7 @@ export async function syncUserFromMediaServer(
   serverUser: ServerUser;
   user: User;
   created: boolean;
-  newlyDisabled: boolean;
+  lostAccess: boolean;
 } | null> {
   const { isPlexServer = false } = options;
   const inTransaction = <T>(run: (tx: Tx) => Promise<T>): Promise<T> =>
@@ -495,16 +494,18 @@ export async function syncUserFromMediaServer(
 
       const updated = await writeChanges(existing, changes);
 
-      // Sync is the only thing that moves joined_at from the server side, so
-      // the identity rollups have to follow it. Guarded because this runs for
-      // every user on every sync tick.
-      if (advancedActivity || nextJoinedAt?.getTime() !== existing.joinedAt?.getTime()) {
+      // Guarded: this runs for every user on every sync tick.
+      if (
+        advancedActivity ||
+        nextJoinedAt?.getTime() !== existing.joinedAt?.getTime() ||
+        updated.thumbUrl !== existing.thumbUrl
+      ) {
         await recompute(existing.userId);
       }
       await clearScopeOnLibraryChange(existing);
 
       const user = await identityOf(existing.userId);
-      return { serverUser: updated, user, created: false, newlyDisabled: false };
+      return { serverUser: updated, user, created: false, lostAccess: false };
     }
 
     // Already folded into another account by a same-server merge. Creating it
@@ -583,7 +584,7 @@ export async function syncUserFromMediaServer(
       serverUser: result.serverUser,
       user: result.user,
       created: true,
-      newlyDisabled: false,
+      lostAccess: false,
     };
   }
 
@@ -594,15 +595,19 @@ export async function syncUserFromMediaServer(
   // Account level only: the identity lookup and users.email below keep the raw
   // value, so a username never becomes a login email or links two people.
   const accountEmail = mediaUser.email ?? usernameAsEmail(mediaUser.username);
+  // Only tofa reports a cloud identity; other servers' rows keep whatever they hold.
+  const cloudIdentity =
+    mediaUser.cloudIdentityId === undefined ? {} : { cloudIdentityId: mediaUser.cloudIdentityId };
 
   if (existing) {
     const changes: ServerUserChanges = {
       username: mediaUser.username,
       email: accountEmail,
-      thumbUrl: mediaUser.thumb ?? null,
+      ...(mediaUser.picturesUnread ? {} : { thumbUrl: mediaUser.thumb ?? null }),
       isServerAdmin: mediaUser.isAdmin,
       isDisabled: mediaUser.isDisabled ?? false,
       libraryIds,
+      ...cloudIdentity,
     };
 
     const advancedActivity = advancedActivityAt(mediaUser.lastActivityAt, existing.lastActivityAt);
@@ -612,7 +617,7 @@ export async function syncUserFromMediaServer(
 
     const updated = await writeChanges(existing, changes);
 
-    if (advancedActivity) {
+    if (advancedActivity || updated.thumbUrl !== existing.thumbUrl) {
       await recompute(existing.userId);
     }
     await clearScopeOnLibraryChange(existing);
@@ -622,7 +627,10 @@ export async function syncUserFromMediaServer(
       serverUser: updated,
       user,
       created: false,
-      newlyDisabled: !existing.isDisabled && updated.isDisabled,
+      // A cloud identity cleared or replaced is tofa revoking that person's access.
+      lostAccess:
+        (!existing.isDisabled && updated.isDisabled) ||
+        (existing.cloudIdentityId !== null && updated.cloudIdentityId !== existing.cloudIdentityId),
     };
   }
 
@@ -680,6 +688,7 @@ export async function syncUserFromMediaServer(
         libraryIds,
         joinedAt: mediaUser.joinedAt ?? null,
         lastActivityAt: mediaUser.lastActivityAt ?? null,
+        ...cloudIdentity,
       })
       .returning();
 
@@ -697,7 +706,7 @@ export async function syncUserFromMediaServer(
     known.usersById.set(result.user.id, result.user);
   }
 
-  return { serverUser: result.serverUser, user: result.user, created: true, newlyDisabled: false };
+  return { serverUser: result.serverUser, user: result.user, created: true, lostAccess: false };
 }
 
 /**
@@ -734,6 +743,13 @@ export async function recomputeIdentityAggregates(
       total_violations = coalesce(v.count, 0),
       first_joined_at = a.first_joined,
       last_activity_at = a.last_activity,
+      -- A sign-in picture stays only while none of the person's accounts has one.
+      thumbnail = coalesce((
+        SELECT pa.thumb_url FROM ${serverUsers} pa
+        WHERE pa.user_id = u.id AND pa.thumb_url IS NOT NULL
+        ORDER BY ${representativeAccountOrderSql('pa')}
+        LIMIT 1
+      ), u.thumbnail),
       updated_at = now()
     FROM (
       SELECT ${users.id} AS user_id,
