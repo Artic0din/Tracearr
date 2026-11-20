@@ -27,7 +27,7 @@ Screenshots and the feature tour are at [tracearr.com](https://tracearr.com), th
 
 ## What It Does
 
-**Multi-Server Dashboard** - Connect Plex, Jellyfin, Emby, tofa, and Silo to a single interface. Active streams, server health, and per-server CPU, memory, and bandwidth charts sit on one page. Plex reports its own numbers; Jellyfin and Emby report theirs through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE); tofa reports CPU and memory from its own metrics endpoint. Silo reports no host stats, so a Silo server shows streams but no CPU or memory chart.
+**Multi-Server Dashboard** - Connect Plex, Jellyfin, Emby, tofa, and Silo to a single interface. Active streams, server health, and per-server CPU and memory charts sit on one page, plus bandwidth charts for Plex, the only server type that reports bandwidth. Plex reports its own numbers; Jellyfin and Emby report theirs through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE); tofa reports CPU and memory from its own metrics endpoint. Silo reports no host stats, so a Silo server shows streams but no CPU or memory chart.
 
 **Session Tracking** - Complete session history: who watched what, when, where, and on what device. Every stream includes geolocation data with ASN, continent, and postal code.
 
@@ -210,7 +210,7 @@ Frontend runs at `localhost:5173`, API at `localhost:3000`.
 
 **MapLibre with a bundled PMTiles basemap** replaces the old raster tiles. The archive is a zoom 8 extract of the Protomaps planet build, made at image build time by `scripts/fetch-basemap.sh`, and ships in the image, so the map works on an instance with no outbound internet access.
 
-**SSE for instant sessions** - Plex streams session updates in real-time via Server-Sent Events, so streams appear the moment they start. Jellyfin and Emby get the same through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE); without it they fall back to polling. tofa and Silo send live events over their own socket and are polled only while it is down. Silo's socket needs an API key with the `admin:monitor:read` scope; without it Tracearr polls Silo.
+**SSE for instant sessions** - Plex streams session updates in real-time via Server-Sent Events, so streams appear the moment they start. Jellyfin and Emby get the same through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE); without it they fall back to polling. tofa and Silo send live events over their own socket. Tracearr polls them in full while the socket is down and runs a periodic reconciliation poll while it is connected. Silo's socket needs an API key with the `admin:monitor:read` scope; without it Tracearr polls Silo.
 
 ## Project Structure
 
