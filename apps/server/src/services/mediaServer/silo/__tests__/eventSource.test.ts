@@ -146,6 +146,19 @@ describe('SiloEventSource', () => {
       event: 'catalog.item.changed',
       data: { library_id: '1', content_id: 'movie-tmdb-949', change: 'added' },
     });
+    // Metadata/file edits reconcile on periodic full scan rather than incremental added_after sync
+    ws.receive({
+      type: 'event',
+      channel: 'catalog',
+      event: 'catalog.item.changed',
+      data: { library_id: '1', content_id: 'movie-tmdb-949', change: 'metadata_updated' },
+    });
+    ws.receive({
+      type: 'event',
+      channel: 'catalog',
+      event: 'catalog.item.changed',
+      data: { library_id: '1', content_id: 'movie-tmdb-949', change: 'files_changed' },
+    });
     ws.receive({
       type: 'event',
       channel: 'catalog',

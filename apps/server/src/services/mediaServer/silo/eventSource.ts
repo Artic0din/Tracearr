@@ -463,11 +463,10 @@ export class SiloEventSource extends EventEmitter {
             // absent across all enabled libraries before forwarding a global tombstone id.
             void this.confirmRemovedAndEmit(contentId, generation);
           }
-        } else if (
-          change === 'added' ||
-          change === 'files_changed' ||
-          change === 'metadata_updated'
-        ) {
+        } else if (change === 'added') {
+          // Only additions trigger event-driven incremental sync (Silo's added_after only
+          // returns new items). files_changed and metadata_updated reconcile on the
+          // periodic full scan, matching Plex/Jellyfin behavior in libraryEventSync.ts.
           this.emit('library:event', {
             type: 'added',
             itemId: contentId,
