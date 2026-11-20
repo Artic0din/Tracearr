@@ -92,6 +92,16 @@ describe('buildMediaServerItemUrl', () => {
     expect(buildMediaServerItemUrl({ ...episode, showRatingKey: null })).toBeNull();
   });
 
+  it('builds a Silo link at /item/:id with encoded content id', () => {
+    expect(
+      buildMediaServerItemUrl({
+        serverType: 'silo',
+        baseUrl: 'https://silo.example.com/',
+        ratingKey: 'movie:heat-1995',
+      })
+    ).toBe('https://silo.example.com/item/movie%3Aheat-1995');
+  });
+
   it('does not double the slash when the configured url has a trailing one', () => {
     expect(
       buildMediaServerItemUrl({

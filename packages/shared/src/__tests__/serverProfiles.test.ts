@@ -41,7 +41,7 @@ describe('server profiles', () => {
     ['jellyfin', 'ssePlugin', 'ssePlugin', 'username', true],
     ['emby', 'ssePlugin', 'ssePlugin', 'username', true],
     ['tofa', 'tofaSocket', 'tofaMetrics', 'server', true],
-    ['silo', 'none', 'none', 'server', true],
+    ['silo', 'siloSocket', 'none', 'server', true],
   ] as const)('%s', (type, liveEvents, hostStats, emailSource, playerName) => {
     expect(SERVER_PROFILES[type]).toMatchObject({
       liveEvents,

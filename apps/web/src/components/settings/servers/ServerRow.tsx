@@ -362,6 +362,7 @@ function RealtimeStatus({
     case 'none':
       return null;
     case 'tofaSocket':
+    case 'siloSocket':
       if (!connectionStatus) return checking;
       return connectionStatus.mode === 'realtime'
         ? realtime()

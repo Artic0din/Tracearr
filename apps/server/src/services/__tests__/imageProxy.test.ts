@@ -55,6 +55,7 @@ import {
   buildLqipPlaceholder,
   buildAvatarUrl,
   buildUpstreamRequest,
+  resolveSiloRedirectTarget,
   persistDominantColorIfNeeded,
   proxyAccountPicture,
   _resetImageOriginCacheForTests,
@@ -279,6 +280,135 @@ describe('proxyImage cache-miss pipeline', () => {
 
     expect(result.contentType).toBe('image/svg+xml');
     expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('follows a single validated 302 redirect from Silo /api/v2/item-posters/{content_id}', async () => {
+    mockSelectChain([
+      {
+        id: 'server-s',
+        type: 'silo',
+        url: 'http://silo.local:8091',
+        token: 'sa_key',
+        historicalAt: null,
+      },
+    ]);
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: {
+            location: '/api/v2/artwork/tmdb/movies/949/poster/w300.webp?exp=9999999999&sig=ok',
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(testImage, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      );
+
+    const result = await proxyImage({
+      serverId: randomUUID(),
+      imagePath: '/api/v2/item-posters/movie:heat-1995?exp=9999999999&sig=abc',
+      width: 240,
+      height: 360,
+    });
+
+    expect(result.contentType).toBe('image/webp');
+    expect(result.degraded).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[1]?.[0]).toBe(
+      'http://silo.local:8091/api/v2/artwork/tmdb/movies/949/poster/w300.webp?exp=9999999999&sig=ok'
+    );
+    expect(fetchSpy.mock.calls[1]?.[1]).toMatchObject({
+      headers: { Accept: 'image/*' },
+      redirect: 'manual',
+    });
+  });
+
+  it('blocks a Silo 302 redirect to a private or non-allowlisted target', async () => {
+    mockSelectChain([
+      {
+        id: 'server-s',
+        type: 'silo',
+        url: 'http://silo.local:8091',
+        token: 'sa_key',
+        historicalAt: null,
+      },
+    ]);
+    fetchSpy.mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://192.168.1.5/secret.png' },
+      })
+    );
+
+    const result = await proxyImage({
+      serverId: randomUUID(),
+      imagePath: '/api/v2/item-posters/movie-tmdb-949?exp=9999999999&sig=abc',
+      width: 240,
+      height: 360,
+    });
+
+    expect(result.degraded).toBe(true);
+    expect(result.contentType).toBe('image/svg+xml');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('proxies a known Silo direct S3 HTTPS poster and blocks an unknown one', async () => {
+    const s3Url = 'https://cdn.example.com/posters/movie-1.webp?X-Amz-Signature=deadbeef';
+    const siloRow = {
+      id: 'server-s',
+      type: 'silo',
+      url: 'http://silo.local:8091',
+      token: 'sa_key',
+      historicalAt: null,
+    };
+
+    // Known poster in library_items -> succeeds
+    const limitMock = vi
+      .fn()
+      .mockResolvedValueOnce([siloRow]) // getServerRow
+      .mockResolvedValueOnce([{ id: 'item-1' }]) // isKnownSiloDirectPoster -> libraryItems
+      .mockResolvedValueOnce([]); // persistDominantColorIfNeeded
+    vi.mocked(db.select).mockReturnValue({
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: limitMock,
+    } as never);
+
+    const okResult = await proxyImage({
+      serverId: randomUUID(),
+      imagePath: s3Url,
+      width: 240,
+      height: 360,
+    });
+    expect(okResult.contentType).toBe('image/webp');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      s3Url,
+      expect.objectContaining({ headers: { Accept: 'image/*' }, redirect: 'manual' })
+    );
+
+    // Unknown external URL -> rejected before fetch
+    fetchSpy.mockClear();
+    _resetImageOriginCacheForTests();
+    const limitMock2 = vi
+      .fn()
+      .mockResolvedValueOnce([siloRow]) // getServerRow
+      .mockResolvedValueOnce([]) // libraryItems
+      .mockResolvedValueOnce([]); // sessions
+    vi.mocked(db.select).mockReturnValue({
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: limitMock2,
+    } as never);
+
+    const blocked = await proxyImage({
+      serverId: randomUUID(),
+      imagePath: 'https://attacker.example/evil.png',
+      width: 240,
+      height: 360,
+    });
+    expect(blocked.degraded).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('writes atomically: tmp path named after the pid, written before the rename into place', async () => {
@@ -988,13 +1118,43 @@ describe('buildUpstreamRequest', () => {
     expect(headers['X-Emby-Token']).toBe('tok123');
   });
 
-  it('silo fetches the signed artwork link as given, without the key or resize params', () => {
+  it('silo fetches signed artwork and item-posters links as given, without the key or resize params', () => {
     const server = { ...baseServer, type: 'silo' } as never;
-    const path =
+    const artworkPath =
       '/api/v2/artwork/tmdb/movies/10030/poster/w300.7f9a5fef.webp?exp=1794196800&sig=AbC123xyz';
-    const { imageUrl, headers } = buildUpstreamRequest(server, path, { width: 240, height: 360 });
-    expect(imageUrl).toBe(`http://media:1234${path}`);
-    expect(Object.values(headers).join(' ')).not.toContain('tok123');
+    const itemPosterPath = '/api/v2/item-posters/movie:heat-1995?exp=1794196800&sig=AbC123xyz';
+    for (const path of [artworkPath, itemPosterPath]) {
+      const { imageUrl, headers } = buildUpstreamRequest(server, path, { width: 240, height: 360 });
+      expect(imageUrl).toBe(`http://media:1234${path}`);
+      expect(Object.values(headers).join(' ')).not.toContain('tok123');
+    }
+  });
+
+  it('resolveSiloRedirectTarget accepts same-origin artwork or public HTTPS S3 URLs and rejects unsafe hops', () => {
+    expect(
+      resolveSiloRedirectTarget(
+        'http://silo.local:8091',
+        '/api/v2/artwork/tmdb/movies/1/poster/w300.webp?exp=1&sig=x'
+      )
+    ).toBe('http://silo.local:8091/api/v2/artwork/tmdb/movies/1/poster/w300.webp?exp=1&sig=x');
+    expect(
+      resolveSiloRedirectTarget(
+        'http://silo.local:8091',
+        'https://cdn.example.com/bucket/poster.webp?X-Amz-Signature=abc'
+      )
+    ).toBe('https://cdn.example.com/bucket/poster.webp?X-Amz-Signature=abc');
+
+    for (const bad of [
+      '/api/v2/admin/users?exp=1&sig=x',
+      'http://cdn.example.com/poster.webp',
+      'https://10.0.0.5/poster.webp',
+      'https://169.254.169.254/latest/meta-data/',
+      'https://user:pass@cdn.example.com/poster.webp',
+    ]) {
+      expect(() => resolveSiloRedirectTarget('http://silo.local:8091', bad)).toThrow(
+        SsrfBlockedError
+      );
+    }
   });
 
   it('silo refuses a path outside the artwork route or one that walks out of it', () => {

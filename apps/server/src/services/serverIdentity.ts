@@ -36,7 +36,8 @@ export async function readServerIdentity(
 /**
  * Whether the server at this address and key lists any user Tracearr already holds for
  * this server row. Jellyfin and Emby user ids are random GUIDs minted per install, so one
- * match means the same install. Plex local ids are small integers and prove nothing.
+ * match means the same install. Plex and Silo local ids are small sequential integers and
+ * prove nothing.
  */
 export async function sharesKnownUsers(
   server: Omit<IdentifiableServer, 'machineIdentifier'>

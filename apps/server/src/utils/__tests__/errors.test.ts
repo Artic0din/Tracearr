@@ -442,6 +442,15 @@ describe('ExternalServiceError', () => {
     expect(error.message).toBe('Emby error: Invalid API key');
   });
 
+  it('should use SILO_ERROR code for silo service', () => {
+    const error = new ExternalServiceError('silo', 'Invalid API key');
+
+    expect(error.statusCode).toBe(502);
+    expect(error.code).toBe(ErrorCodes.SILO_ERROR);
+    expect(error.name).toBe('ExternalServiceError');
+    expect(error.message).toBe('Silo error: Invalid API key');
+  });
+
   it('should capitalize service name in message', () => {
     const plexError = new ExternalServiceError('plex', 'test');
     const jellyfinError = new ExternalServiceError('jellyfin', 'test');

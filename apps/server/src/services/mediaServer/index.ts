@@ -155,6 +155,7 @@ export { JellyfinClient } from './jellyfin/client.js';
 export { EmbyClient } from './emby/client.js';
 export { TofaClient } from './tofa/client.js';
 export { SiloClient } from './silo/client.js';
+export { SiloEventSource } from './silo/eventSource.js';
 
 // Plex-specific types
 export type { PlexServerResource, PlexServerConnection } from './plex/parser.js';
@@ -169,3 +170,4 @@ export type { EmbyActivityEntry } from './emby/parser.js';
 export * as plexParser from './plex/parser.js';
 export * as jellyfinParser from './jellyfin/parser.js';
 export * as embyParser from './emby/parser.js';
+export * as siloParser from './silo/parser.js';

@@ -613,8 +613,16 @@ export class LibrarySyncService {
       throw new Error(`${server.name} is unreachable - skipping library sync`);
     }
 
-    // Fetch all libraries and filter out unsupported types (e.g., photo libraries)
-    const UNSUPPORTED_LIBRARY_TYPES = new Set(['photo', 'boxsets', 'playlists']);
+    // Fetch all libraries and filter out unsupported types (e.g., photo, books, podcasts)
+    const UNSUPPORTED_LIBRARY_TYPES = new Set([
+      'photo',
+      'boxsets',
+      'playlists',
+      'audiobooks',
+      'ebooks',
+      'podcasts',
+      'manga',
+    ]);
     const allLibraries = await client.getLibraries();
     const libraries = allLibraries.filter((lib) => {
       if (UNSUPPORTED_LIBRARY_TYPES.has(lib.type.toLowerCase())) {

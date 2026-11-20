@@ -9,7 +9,7 @@ export interface ServerProfile {
   /** The id the server needs to stop a playback. */
   terminatesBy: 'plexSessionId' | 'sessionKey';
   /** ssePlugin: needs the Tracearr SSE plugin installed on the server; without it the poller covers the server. */
-  liveEvents: 'plexWebsocket' | 'ssePlugin' | 'tofaSocket' | 'none';
+  liveEvents: 'plexWebsocket' | 'ssePlugin' | 'tofaSocket' | 'siloSocket' | 'none';
   /** Where host CPU and memory come from: Plex's statistics endpoint, the SSE plugin's stats events, or tofa's metrics endpoint. */
   hostStats: 'plexStatistics' | 'ssePlugin' | 'tofaMetrics' | 'none';
   /** Seconds between host samples while nothing is reading them; null when the server samples at one rate. */
@@ -137,7 +137,7 @@ export const SERVER_PROFILES: Record<ServerType, ServerProfile> = {
     displayName: 'Silo',
     sessionIdentity: 'composite',
     terminatesBy: 'sessionKey',
-    liveEvents: 'none',
+    liveEvents: 'siloSocket',
     hostStats: 'none',
     hostStatsIdleSeconds: null,
     emailSource: 'server',
@@ -153,7 +153,7 @@ export const SERVER_PROFILES: Record<ServerType, ServerProfile> = {
     watchedThreshold: 'tracearrSetting',
     builtInRequests: null,
     guideImageHosts: [],
-    itemLinks: 'none',
+    itemLinks: 'serverAddress',
   },
 };
 

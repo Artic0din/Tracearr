@@ -83,8 +83,11 @@ describe('runPluginUpdateCheck', () => {
     expect(mockDispatchPluginUpdate).not.toHaveBeenCalled();
   });
 
-  it('never nudges plex servers', async () => {
-    mockDbServers.mockResolvedValue([{ id: 's2', name: 'Plex', type: 'plex' }]);
+  it('never nudges plex or silo servers', async () => {
+    mockDbServers.mockResolvedValue([
+      { id: 's2', name: 'Plex', type: 'plex' },
+      { id: 's3', name: 'Silo', type: 'silo' },
+    ]);
     await runPluginUpdateCheck();
     expect(mockDispatchPluginUpdate).not.toHaveBeenCalled();
   });
