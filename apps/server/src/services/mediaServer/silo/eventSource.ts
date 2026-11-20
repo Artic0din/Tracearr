@@ -38,6 +38,9 @@ const MIN_STABLE_CONNECTION_MS = 5_000;
 const IMMEDIATE_RECONNECT_DELAY_MS = 250;
 // Cap Retry-After honored from 503 responses
 const MAX_RETRY_AFTER_MS = 60_000;
+// Coalesce burst catalog removals into bounded batched content_ids lookups (Silo max 200)
+const REMOVAL_BATCH_DELAY_MS = 250;
+const MAX_REMOVAL_BATCH_SIZE = 200;
 
 export interface SiloSessionEvent {
   event: string;
@@ -143,6 +146,10 @@ export class SiloEventSource extends EventEmitter {
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private handshakeTimer: NodeJS.Timeout | null = null;
+  private stabilityTimer: NodeJS.Timeout | null = null;
+  private removalFlushTimer: NodeJS.Timeout | null = null;
+  private pendingRemovals = new Set<string>();
+  private removalFlushInFlight = false;
   private connectedAt: Date | null = null;
   private lastEventTime: Date | null = null;
   private lastError: Error | null = null;
@@ -345,12 +352,15 @@ export class SiloEventSource extends EventEmitter {
     if (typeof rawData !== 'string') return;
     this.lastEventTime = new Date();
 
-    let frame: SiloWsFrame;
+    let parsed: unknown;
     try {
-      frame = JSON.parse(rawData) as SiloWsFrame;
+      parsed = JSON.parse(rawData);
     } catch {
       return;
     }
+
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    const frame = parsed as SiloWsFrame;
 
     const type = typeof frame.type === 'string' ? frame.type : null;
     if (!type) return;
@@ -387,8 +397,16 @@ export class SiloEventSource extends EventEmitter {
       case 'subscribed': {
         this.clearHandshakeTimeout();
         this.connectedAt = new Date();
-        this.reconnectAttempts = 0;
         this.lastError = null;
+        // Only reset retry backoff once the connection stays healthy past the stability window,
+        // so flapping subscribe->close loops still back off and eventually enter fallback.
+        if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
+        this.stabilityTimer = setTimeout(() => {
+          this.stabilityTimer = null;
+          if (generation === this.connectGeneration && this.state === 'connected') {
+            this.reconnectAttempts = 0;
+          }
+        }, MIN_STABLE_CONNECTION_MS);
         console.log(`[SiloWS] Connected to ${this.serverName}`);
         this.setState('connected');
         // Per docs/realtime-api.md: read GET /api/v2/admin/sessions on subscribe to reconcile state
@@ -459,9 +477,9 @@ export class SiloEventSource extends EventEmitter {
               itemId: null,
             } satisfies SiloLibraryEvent);
           } else {
-            // Silo emits catalog.item.changed(removed) per library; confirm the item is
-            // absent across all enabled libraries before forwarding a global tombstone id.
-            void this.confirmRemovedAndEmit(contentId, generation);
+            // Silo emits catalog.item.changed(removed) per library; batch and confirm
+            // absence across all enabled libraries before forwarding global tombstone ids.
+            this.enqueueRemovalConfirmation(contentId, generation);
           }
         } else if (change === 'added') {
           // Only additions trigger event-driven incremental sync (Silo's added_after only
@@ -481,10 +499,39 @@ export class SiloEventSource extends EventEmitter {
     }
   }
 
-  private async confirmRemovedAndEmit(contentId: string, generation: number): Promise<void> {
-    let confirmedGone = false;
+  private enqueueRemovalConfirmation(contentId: string, generation: number): void {
+    this.pendingRemovals.add(contentId);
+    if (this.pendingRemovals.size >= MAX_REMOVAL_BATCH_SIZE && !this.removalFlushInFlight) {
+      if (this.removalFlushTimer) {
+        clearTimeout(this.removalFlushTimer);
+        this.removalFlushTimer = null;
+      }
+      void this.flushPendingRemovals(generation);
+      return;
+    }
+    if (!this.removalFlushTimer && !this.removalFlushInFlight) {
+      this.removalFlushTimer = setTimeout(() => {
+        this.removalFlushTimer = null;
+        void this.flushPendingRemovals(generation);
+      }, REMOVAL_BATCH_DELAY_MS);
+    }
+  }
+
+  private async flushPendingRemovals(generation: number): Promise<void> {
+    if (this.removalFlushInFlight || this.pendingRemovals.size === 0) return;
+    if (generation !== this.connectGeneration || this.state === 'disconnected') {
+      this.pendingRemovals.clear();
+      return;
+    }
+
+    const batch = Array.from(this.pendingRemovals).slice(0, MAX_REMOVAL_BATCH_SIZE);
+    for (const id of batch) this.pendingRemovals.delete(id);
+
+    this.removalFlushInFlight = true;
+    let presentIds: Set<string> | null = null;
     try {
-      const url = `${this.baseUrl}/api/v2/admin/catalog/items?content_ids=${encodeURIComponent(contentId)}&limit=1`;
+      const idParams = batch.map((id) => `content_ids=${encodeURIComponent(id)}`).join('&');
+      const url = `${this.baseUrl}/api/v2/admin/catalog/items?${idParams}&limit=${batch.length}`;
       const response = await this.fetchFn(url, {
         method: 'GET',
         headers: {
@@ -494,29 +541,57 @@ export class SiloEventSource extends EventEmitter {
         signal: AbortSignal.timeout(TICKET_MINT_TIMEOUT_MS),
       });
       if (response.ok) {
-        const body = (await response.json()) as { items?: unknown };
-        const items = Array.isArray(body.items) ? body.items : [];
-        const stillPresent = items.some(
-          (item) =>
-            !!item &&
-            typeof item === 'object' &&
-            (item as Record<string, unknown>).content_id === contentId
-        );
-        confirmedGone = !stillPresent;
+        const body: unknown = await response.json();
+        // Require a valid items array before treating any id as absent; a malformed
+        // response must never tombstone still-present library items.
+        if (
+          body !== null &&
+          typeof body === 'object' &&
+          !Array.isArray(body) &&
+          Array.isArray((body as { items?: unknown }).items)
+        ) {
+          presentIds = new Set<string>();
+          for (const item of (body as { items: unknown[] }).items) {
+            if (item && typeof item === 'object') {
+              const cid = (item as Record<string, unknown>).content_id;
+              if (typeof cid === 'string' && cid) presentIds.add(cid);
+            }
+          }
+        }
       } else {
         await response.body?.cancel().catch(() => undefined);
       }
     } catch {
       // Fail safe: fall back to a sync-only event rather than falsely tombstoning.
-      confirmedGone = false;
+      presentIds = null;
+    } finally {
+      this.removalFlushInFlight = false;
     }
 
-    if (generation !== this.connectGeneration || this.state === 'disconnected') return;
+    if (generation !== this.connectGeneration) return;
 
-    this.emit('library:event', {
-      type: 'removed',
-      itemId: confirmedGone ? contentId : null,
-    } satisfies SiloLibraryEvent);
+    if (presentIds === null) {
+      this.emit('library:event', { type: 'removed', itemId: null } satisfies SiloLibraryEvent);
+    } else {
+      let sawStillPresent = false;
+      for (const id of batch) {
+        if (presentIds.has(id)) {
+          sawStillPresent = true;
+        } else {
+          this.emit('library:event', { type: 'removed', itemId: id } satisfies SiloLibraryEvent);
+        }
+      }
+      if (sawStillPresent) {
+        this.emit('library:event', { type: 'removed', itemId: null } satisfies SiloLibraryEvent);
+      }
+    }
+
+    if (this.pendingRemovals.size > 0 && !this.removalFlushTimer) {
+      this.removalFlushTimer = setTimeout(() => {
+        this.removalFlushTimer = null;
+        void this.flushPendingRemovals(generation);
+      }, REMOVAL_BATCH_DELAY_MS);
+    }
   }
 
   private handleClose(code: number, reason: string): void {
@@ -619,7 +694,7 @@ export class SiloEventSource extends EventEmitter {
   private startHandshakeTimeout(generation: number): void {
     this.clearHandshakeTimeout();
     this.handshakeTimer = setTimeout(() => {
-      if (generation !== this.connectGeneration || this.state === 'disconnected') return;
+      if (generation !== this.connectGeneration) return;
       console.warn(`[SiloWS] Handshake timeout on ${this.serverName}, reconnecting`);
       this.lastError = new Error('Silo WebSocket handshake timeout');
       this.emit('connection:error', this.lastError);
@@ -640,6 +715,15 @@ export class SiloEventSource extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.stabilityTimer) {
+      clearTimeout(this.stabilityTimer);
+      this.stabilityTimer = null;
+    }
+    if (this.removalFlushTimer) {
+      clearTimeout(this.removalFlushTimer);
+      this.removalFlushTimer = null;
+    }
+    this.pendingRemovals.clear();
     this.clearHandshakeTimeout();
   }
 

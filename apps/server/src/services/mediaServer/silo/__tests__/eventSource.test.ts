@@ -171,6 +171,7 @@ describe('SiloEventSource', () => {
       event: 'catalog.library.changed',
       data: { library_id: '1', reason: 'library_enabled' },
     });
+    await vi.advanceTimersByTimeAsync(250);
     await vi.waitFor(() => {
       expect(libraryEvents).toHaveLength(3);
     });
@@ -195,16 +196,24 @@ describe('SiloEventSource', () => {
     expect(source.getState()).toBe('disconnected');
   });
 
-  it('suppresses global tombstone id on catalog removal when another enabled library still holds the item', async () => {
-    fetchMock.mockResolvedValueOnce(ticketResponse('ticket-abc')).mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          items: [{ content_id: 'movie-tmdb-949', library_ids: ['2'] }],
-          page: { has_more: false },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } }
+  it('batches burst catalog removals into one lookup and suppresses tombstones for still-present or malformed responses', async () => {
+    fetchMock
+      .mockResolvedValueOnce(ticketResponse('ticket-abc'))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [{ content_id: 'movie-still-here', library_ids: ['2'] }],
+            page: { has_more: false },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
       )
-    );
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ unexpected: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      );
     const source = makeSource();
     const libraryEvents: unknown[] = [];
     source.on('library:event', (e: unknown) => libraryEvents.push(e));
@@ -214,17 +223,70 @@ describe('SiloEventSource', () => {
     ws.receive({ type: 'hello', available_channels: ['sessions', 'catalog'] });
     ws.receive({ type: 'subscribed', channels: ['sessions', 'catalog'] });
 
+    // JSON null and array frames must be ignored without throwing
+    expect(() => ws.receive(null)).not.toThrow();
+    expect(() => ws.receive([1, 2, 3])).not.toThrow();
+
+    // Two removals in one burst coalesce into a single batched catalog lookup
     ws.receive({
       type: 'event',
       channel: 'catalog',
       event: 'catalog.item.changed',
-      data: { library_id: '1', content_id: 'movie-tmdb-949', change: 'removed' },
+      data: { library_id: '1', content_id: 'movie-still-here', change: 'removed' },
     });
+    ws.receive({
+      type: 'event',
+      channel: 'catalog',
+      event: 'catalog.item.changed',
+      data: { library_id: '1', content_id: 'movie-gone', change: 'removed' },
+    });
+    await vi.advanceTimersByTimeAsync(250);
     await vi.waitFor(() => {
-      expect(libraryEvents).toHaveLength(1);
+      expect(libraryEvents).toHaveLength(2);
     });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(libraryEvents).toEqual([
+      { type: 'removed', itemId: 'movie-gone' },
+      { type: 'removed', itemId: null },
+    ]);
 
-    expect(libraryEvents).toEqual([{ type: 'removed', itemId: null }]);
+    // Malformed response (missing items array) must never tombstone the item
+    ws.receive({
+      type: 'event',
+      channel: 'catalog',
+      event: 'catalog.item.changed',
+      data: { library_id: '1', content_id: 'movie-malformed', change: 'removed' },
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.waitFor(() => {
+      expect(libraryEvents).toHaveLength(3);
+    });
+    expect(libraryEvents[2]).toEqual({ type: 'removed', itemId: null });
+
+    source.disconnect();
+  });
+
+  it('does not reset reconnectAttempts when a subscription drops before the stability window', async () => {
+    fetchMock
+      .mockResolvedValueOnce(ticketResponse('tok-1'))
+      .mockResolvedValueOnce(ticketResponse('tok-2'));
+    const source = makeSource();
+    source.on('connection:error', () => undefined);
+
+    await source.connect();
+    sockets[0]!.receive({ type: 'hello', available_channels: ['sessions'] });
+    sockets[0]!.receive({ type: 'subscribed', channels: ['sessions'] });
+    // Close immediately (before 5s stability window)
+    sockets[0]!.triggerClose(1006, 'dropped');
+    expect(source.getStatus().reconnectAttempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(2_500);
+    sockets[1]!.receive({ type: 'hello', available_channels: ['sessions'] });
+    sockets[1]!.receive({ type: 'subscribed', channels: ['sessions'] });
+    // Still before stability window — attempt count must NOT reset to 0
+    sockets[1]!.triggerClose(1006, 'dropped again');
+    expect(source.getStatus().reconnectAttempts).toBe(2);
+
     source.disconnect();
   });
 

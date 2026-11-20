@@ -209,6 +209,39 @@ describe('SiloClient', () => {
     expect(leaves.items[0]?.ratingKey).toBe('ep-9');
   });
 
+  it('lists both movies and series since the last sync for mixed libraries', async () => {
+    const since = new Date('2026-11-01T00:00:00.000Z');
+    const after = 'added_after=2026-11-01T00%3A00%3A00.000Z&limit=200';
+    respond({
+      [`/admin/catalog/items?library_id=5&type=movie&${after}`]: {
+        items: [movie('m-new')],
+        page: {},
+      },
+      [`/admin/catalog/items?library_id=5&type=series&${after}`]: {
+        items: [
+          {
+            content_id: 's-new',
+            type: 'series',
+            title: 'New Show',
+            added_at: '2026-11-05T00:00:00Z',
+            versions: [],
+          },
+        ],
+        page: {},
+      },
+    });
+    const client = new SiloClient({ url: URL, token: 'k' });
+
+    const res = await client.getLibraryItemsSince(
+      '5',
+      { kind: 'date', since },
+      { libraryType: 'mixed' }
+    );
+    expect(res.feed).toBe(NOT_NEEDED);
+    expect(res.totalCount).toBe(2);
+    expect(res.items.map((i) => i.ratingKey)).toEqual(['m-new', 's-new']);
+  });
+
   it('batches findExistingRatingKeys up to 200 content_ids per request', async () => {
     const keys = Array.from({ length: 205 }, (_, i) => `movie-${i}`);
     mockFetchJson.mockImplementation(async (url: string) => {
