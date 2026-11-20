@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SERVER_PROFILES, SERVER_TYPES, liveStatsGapSeconds } from '../index.js';
+import { SERVER_PROFILES, SERVER_TYPES, liveStatsGapSeconds, ownerLinkProof } from '../index.js';
 
 describe('server profiles', () => {
   it('has a profile for every server type', () => {
@@ -41,7 +41,7 @@ describe('server profiles', () => {
     ['jellyfin', 'ssePlugin', 'ssePlugin', 'username', true],
     ['emby', 'ssePlugin', 'ssePlugin', 'username', true],
     ['tofa', 'tofaSocket', 'tofaMetrics', 'server', true],
-    ['silo', 'none', 'none', 'server', false],
+    ['silo', 'none', 'none', 'server', true],
   ] as const)('%s', (type, liveEvents, hostStats, emailSource, playerName) => {
     expect(SERVER_PROFILES[type]).toMatchObject({
       liveEvents,
@@ -87,4 +87,8 @@ describe('server profiles', () => {
       });
     }
   );
+
+  it('keeps Silo out of owner account linking', () => {
+    expect(ownerLinkProof('silo')).toBe('unavailable');
+  });
 });

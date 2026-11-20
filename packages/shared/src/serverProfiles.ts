@@ -142,7 +142,7 @@ export const SERVER_PROFILES: Record<ServerType, ServerProfile> = {
     hostStatsIdleSeconds: null,
     emailSource: 'server',
     userIdsIdentifyInstall: false,
-    playerNameCountsTowardDevice: false,
+    playerNameCountsTowardDevice: true,
     linksImportedHistory: false,
     addServerAuth: 'apiKey',
     memberSignIn: 'unavailable',
@@ -172,7 +172,7 @@ export function liveStatsGapSeconds(serverType: ServerType): number {
  * plex.tv account itself, Jellyfin and Emby take the account's username typed back, and tofa needs
  * a tofa sign-in as that account, since it also becomes the owner's tofa login.
  */
-export type OwnerLinkProof = 'plexAccount' | 'typedUsername' | 'tofaSignIn';
+export type OwnerLinkProof = 'plexAccount' | 'typedUsername' | 'tofaSignIn' | 'unavailable';
 
 export function ownerLinkProof(type: ServerType): OwnerLinkProof {
   switch (type) {
@@ -180,10 +180,11 @@ export function ownerLinkProof(type: ServerType): OwnerLinkProof {
       return 'plexAccount';
     case 'jellyfin':
     case 'emby':
-    case 'silo':
       return 'typedUsername';
     case 'tofa':
       return 'tofaSignIn';
+    case 'silo':
+      return 'unavailable';
     default:
       return assertNever(type);
   }

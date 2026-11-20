@@ -31,7 +31,8 @@ function LinkDialog({
     case 'tofaSignIn':
       return <TofaOwnerLinkDialog open onOpenChange={onOpenChange} server={server} />;
     case 'plexAccount':
-      // Plex servers have no owner link fact; the owner links plex.tv accounts instead.
+    case 'unavailable':
+      // Plex uses plex.tv account linking; servers with unavailable owner linking have no link fact.
       return null;
     default:
       return assertNever(proof);
