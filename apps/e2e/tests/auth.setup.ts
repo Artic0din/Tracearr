@@ -18,7 +18,7 @@ setup('authenticate', async ({ page }) => {
 
   // Handle claim code gate if present (only shown on first-time setup when CLAIM_CODE is configured)
   const claimCodeInput = page.locator('#gate-claimCode');
-  if (await claimCodeInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
+  if (await claimCodeInput.isVisible().catch(() => false)) {
     const claimCode = process.env.CLAIM_CODE;
     if (!claimCode) {
       throw new Error(
@@ -37,7 +37,7 @@ setup('authenticate', async ({ page }) => {
   const createAccountButton = page.getByRole('button', { name: 'Create Account' });
   const signInButton = page.getByRole('button', { name: 'Sign In', exact: true });
 
-  if (await createAccountButton.isVisible({ timeout: 2_000 }).catch(() => false)) {
+  if (await createAccountButton.isVisible().catch(() => false)) {
     // First-time setup — sign up as the first owner
     await page.locator('#name').fill(E2E_USER.name);
     await page.locator('#username').fill(E2E_USER.username);
