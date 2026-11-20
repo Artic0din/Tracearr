@@ -2,9 +2,7 @@
   "login": {
     "title": "Tracearr",
     "tagline": "Tracearr – zarządzanie dostępem do strumieni",
-    "createAccountHeading": "Utwórz konto, aby rozpocząć",
     "signInHeading": "Zaloguj się na swoje konto",
-    "createAccountDescription": "Utwórz konto do zarządzania serwerami multimediów",
     "signInDescription": "Zaloguj się, aby uzyskać dostęp do pulpitu",
     "selectPlexServer": "Wybierz swój serwer Plex",
     "waitingForPlex": "Oczekiwanie na autoryzację Plex...",
@@ -19,7 +17,6 @@
     "displayNamePlaceholder": "Wybierz wyświetlaną nazwę",
     "passwordPlaceholder": "Co najmniej 8 znaków",
     "yourPasswordPlaceholder": "Twoje hasło",
-    "setupNote": "Po utworzeniu konta dodasz serwery Plex lub Jellyfin w Ustawieniach.",
     "localDisabledHint": "Lokalne logowanie jest wyłączone dla tej instancji. Poproś administratora o uruchomienie `enable-local-login` z CLI Tracearr, aby je ponownie włączyć.",
     "oidcError": "Logowanie jednokrotne (SSO) nie powiodło się. Spróbuj ponownie lub użyj innej metody logowania.",
     "accountCreated": "Konto utworzone pomyślnie!",
@@ -54,6 +51,60 @@
       "notPermitted": "Nie masz uprawnień do logowania. Skontaktuj się z właścicielem serwera."
     }
   },
+  "setup": {
+    "serverTitle": "Którego serwera multimediów używasz?",
+    "connectTitle": "Połącz swój serwer {{server}}",
+    "connectDescription": "Tracearr obserwuje aktywność na tym serwerze. Możesz dodać inne serwery później w Ustawieniach.",
+    "linkPlexTitle": "Powiąż swoje konto Plex",
+    "linkPlexDescription": "Tracearr znajduje Twoje serwery Plex na Twoim koncie Plex.",
+    "stepsLabel": "Kroki konfiguracji",
+    "stepOfNamed": "Krok {{step}} z {{total}}: {{name}}",
+    "steps": {
+      "server": "Serwer multimediów",
+      "account": "Konto właściciela",
+      "connect": "Połącz serwer",
+      "import": "Importuj historię"
+    },
+    "stepStatus": {
+      "done": "ukończono",
+      "current": "bieżący krok",
+      "upcoming": "nierozpoczęte"
+    },
+    "signedInAs": "Zalogowano jako {{username}}",
+    "serverHint": "To jest pierwszy połączony serwer. Możesz dodać więcej w Ustawieniach.",
+    "ownerTitle": "Utwórz konto właściciela",
+    "ownerDescription": "Konto właściciela zarządza Tracearr i każdym połączonym z nim serwerem.",
+    "ownerDescriptionSignIn": "Kontynuuj z {{server}} aby utworzyć konto właściciela i połączyć się z serwerem, lub użyj nazwy użytkownika i hasła.",
+    "plexWaitingDescription": "Zakończ logowanie do Plex w nowo otwartym oknie.",
+    "pickerTitle": "Wybierz swój serwer {{server}}",
+    "pickerDescription": "Zalogowano jako {{username}}.",
+    "connectHint": "Tracearr odczytuje aktywność z tego serwera.",
+    "connectedTitle": "{{name}} jest połączony",
+    "connectedDescription": "Tracearr monitoruje aktywność tego serwera.",
+    "importTitle": "Importuj historię oglądania",
+    "importDescription": "Zaimportuj odtworzenia z okresu, którego Tracearr nie monitorował. Import odbywa się w tle, więc po uruchomieniu możesz opuścić ten ekran.",
+    "goToDashboard": "Przejdź do pulpitu",
+    "codeExpired": "Kod logowania stracił ważność.",
+    "signInAgain": "Zaloguj się ponownie",
+    "timedOut": "Przekroczono limit czasu logowania {{server}}",
+    "checkAgain": "Sprawdź ponownie"
+  },
+  "tofa": {
+    "signIn": "Zaloguj się przez tofa",
+    "waiting": "Oczekiwanie na zatwierdzenie Tracearr w tofa",
+    "waitingHint": "Zaloguj się do tofa w nowo otwartym oknie i wybierz Zatwierdź.",
+    "waitingDescription": "Po zatwierdzeniu wybierzesz swój serwer, a Tracearr utworzy konto właściciela.",
+    "openAgain": "Otwórz ponownie tofa",
+    "expiresIn": "Wygasa za {{time}}",
+    "codeFallback": "Jeśli tofa poprosi o kod, wprowadź <code>{{code}}</code>.",
+    "pickerNote": "Tylko serwery, których jesteś właścicielem są na liście. Tracearr tworzy swój własny klucz API, który może odczytywać aktywność i zatrzymywać strumienie.",
+    "unreachable": "Tracearr nie może osiągnąć {{name}} poprzez {{address}}.",
+    "noAddress": "tofa nie zwraca adresu lokalnego dla {{name}}.",
+    "noServersTitle": "Brak serwerów tofa do połączenia",
+    "noServers": "{{username}} nie posiada serwerów tofa. Tylko właściciel serwera może go połączyć.",
+    "noServersPassword": "{{username}} nie posiada serwerów tofa, więc nie ma jeszcze nic do połączenia. Utwórz konto właściciela za pomocą nazwy użytkownika i hasła.",
+    "manual": "Zamiast tego wprowadź adres URL i klucz API"
+  },
   "dashboard": {
     "alerts": "Powiadomienia",
     "plays": "Odtworzenia",
@@ -66,6 +117,7 @@
     "noActiveStreams": "Brak aktywnych strumieni",
     "streamsAppearHere": "Aktywne strumienie pojawią się tutaj, gdy użytkownicy zaczną oglądać",
     "dayStreak": "Seria dni",
+    "noServers": "Połącz serwer Plex, Jellyfin, Emby lub tofa aby zobaczyć tutaj jego strumienie, historię i biblioteki.",
     "view": {
       "label": "Widok pulpitu",
       "admin": "Serwer",
@@ -186,6 +238,7 @@
     "mergeTitleBulk": "Scalić tych użytkowników?",
     "mergeReasonEmail": "Oboje mają adres e-mail {{value}} na swoich kontach serwerowych.",
     "mergeReasonEmailUsername": "Oboje używają {{value}} jako nazwy użytkownika lub adresu e-mail konta.",
+    "mergeReasonLinked": "Jeden serwer wyświetla konto {{value}} na drugim serwerze jako własny.",
     "mergeReasonUsername": "Oboje używają nazwy użytkownika {{value}}.",
     "mergeKeep": "Zachowaj",
     "mergeFoldIn": "Zostanie scalony, a następnie usunięty",
@@ -212,12 +265,14 @@
     "suggestionsTitle": "Możliwe duplikaty użytkowników",
     "suggestionsPairEmail": "{{first}} i {{second}} współdzielą adres e-mail",
     "suggestionsPairEmailUsername": "{{first}} i {{second}} używają tego samego adresu jako nazwy użytkownika lub adresu e-mail konta",
+    "suggestionsPairLinked": "{{first}} i {{second}} są połączone na ich serwerach",
     "suggestionsPairUsername": "{{first}} i {{second}} współdzielą nazwę użytkownika",
     "suggestionsSheetDescription": "Scalanie zachowuje jednego użytkownika i usuwa drugiego. Para oznaczona jako „to nie ta sama osoba” przestaje się pojawiać, dopóki jej nie przywrócisz.",
     "suggestionsReview": "Przejrzyj",
     "suggestionsNotSame": "To nie ta sama osoba",
     "suggestionsMatchEmail": "Ten sam adres e-mail",
     "suggestionsMatchEmailUsername": "Oboje używają {{value}} jako nazwy użytkownika lub adresu e-mail konta",
+    "suggestionsMatchLinked": "Powiązane konto",
     "suggestionsMatchUsername": "Ta sama nazwa użytkownika",
     "suggestionsEmpty": "Nie pozostało nic do przejrzenia.",
     "suggestionsDismissed": "Odrzucono ({{count}})",
@@ -262,6 +317,10 @@
     "suggestionsPairEmailUsernameMore_few": "{{first}} i {{second}} używają tego samego adresu jako nazwy użytkownika lub adresu e-mail konta, i jeszcze {{count}}",
     "suggestionsPairEmailUsernameMore_many": "{{first}} i {{second}} używają tego samego adresu jako nazwy użytkownika lub adresu e-mail konta, i jeszcze {{count}}",
     "suggestionsPairEmailUsernameMore_other": "{{first}} i {{second}} używają tego samego adresu jako nazwy użytkownika lub adresu e-mail konta, a także {{count}} więcej",
+    "suggestionsPairLinkedMore_one": "{{first}} i {{second}} są połączone z ich serwerami oraz {{count}} więcej",
+    "suggestionsPairLinkedMore_few": "{{first}} i {{second}} są połączone z ich serwerami oraz {{count}} więcej",
+    "suggestionsPairLinkedMore_many": "{{first}} i {{second}} są połączone z ich serwerami oraz {{count}} więcej",
+    "suggestionsPairLinkedMore_other": "{{first}} i {{second}} są połączone z ich serwerami oraz {{count}} więcej",
     "suggestionsPairUsernameMore_one": "{{first}} i {{second}} współdzielą nazwę użytkownika, i jeszcze {{count}}",
     "suggestionsPairUsernameMore_few": "{{first}} i {{second}} współdzielą nazwę użytkownika, i jeszcze {{count}}",
     "suggestionsPairUsernameMore_many": "{{first}} i {{second}} współdzielą nazwę użytkownika, i jeszcze {{count}}",
@@ -421,6 +480,8 @@
     "stream": {
       "notAvailable": "Nd.",
       "bitrateUnavailable": "Jellyfin i Emby nie ujawniają indywidualnych bitrate wideo i audio podczas transkodowania. Dostępny jest tylko całkowity bitrate strumienia.",
+      "rebuffers": "Ponowne buforowania",
+      "droppedFrames": "Pominięte klatki",
       "stereo": "Stereo",
       "mono": "Mono",
       "noDetails": "Brak szczegółowych informacji dotyczących strumienia",
@@ -698,6 +759,10 @@
       "notSynced": {
         "title": "Biblioteka nie jest jeszcze zsynchronizowana",
         "body": "Statystyki biblioteki pojawią się tutaj, gdy zostanie ona zsynchronizowana. Zwykle dzieje się to automatycznie co godzinę."
+      },
+      "syncQueued": {
+        "title": "Synchronizacja biblioteki w kolejce",
+        "body": "Synchronizacja biblioteki czeka na uruchomienie. Statystyki biblioteki pojawią się tutaj po jej zakończeniu."
       },
       "noMedia": {
         "title": "Brak filmów ani seriali",
@@ -1407,7 +1472,7 @@
         "sessionPaused": "strumień zostaje wstrzymany",
         "sessionHeldFor": "strumień pozostaje wstrzymany przez {{duration}}",
         "sessionHeldForTotal": "strumień był wstrzymany łącznie przez {{duration}}",
-        "sessionWatched": "",
+        "sessionWatched": "strumień liczy się jako obejrzany",
         "accountInactiveFor": "konto pozostaje nieaktywne przez {{duration}}",
         "accountNewDevice": "konto odtwarza z nowego urządzenia",
         "accountTrustChanged": "zmienia się wynik zaufania konta",
@@ -2182,8 +2247,8 @@
           "synonyms": "pauza, bezczynny, porzucony, zawieszony, afk"
         },
         "sessionWatched": {
-          "description": "",
-          "synonyms": ""
+          "description": "Strumień osiąga próg obejrzenia zdefiniowany w Ustawieniach dla typu multimediów.",
+          "synonyms": "obejrzany, zakończony, zakończony, procent, postęp, próg"
         },
         "accountInactiveFor": {
           "label": "Konto przestaje być aktywne",
@@ -2280,6 +2345,7 @@
   "terminateStream": {
     "title": "Przerwij strumień",
     "stopMedia": "Zatrzymać „{{mediaTitle}}” dla @{{username}}?",
+    "stopMediaFor": "Zatrzymać „{{mediaTitle}}” dla {{name}}?",
     "messageLabel": "Wiadomość do użytkownika (opcjonalnie)",
     "messagePlaceholder": "np. Nie udostępniaj swojego konta",
     "messageHint": "Ta wiadomość zostanie wyświetlona użytkownikowi podczas odtwarzania",
@@ -3050,7 +3116,7 @@
         "libraryAll": "Dowolna biblioteka",
         "yearFromLabel": "Od roku",
         "yearToLabel": "Do roku",
-        "addedLabel": "",
+        "addedLabel": "Dodano",
         "sizeGbMinLabel": "Min. rozmiar (GB)",
         "sizeGbMaxLabel": "Maks. rozmiar (GB)",
         "sizeChipAtLeast": "≥ {{min}} GB",

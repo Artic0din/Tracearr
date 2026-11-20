@@ -65,6 +65,7 @@ function makeEntry(overrides: Partial<MediaRequestEntry> = {}): MediaRequestEntr
   return {
     id: 'r1',
     serverId: 's1',
+    serviceType: 'seerr',
     status: 'completed',
     requestedAt: '2026-01-01T00:00:00.000Z',
     availableAt: '2026-01-02T00:00:00.000Z',
@@ -82,6 +83,7 @@ function makeEntry(overrides: Partial<MediaRequestEntry> = {}): MediaRequestEntr
       username: 'alice',
       identityName: 'Alice',
       thumb: null,
+      thumbServerId: null,
     },
     ...overrides,
   };

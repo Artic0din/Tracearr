@@ -6,6 +6,7 @@
  * are handled by abstract methods or configuration.
  */
 
+import { assertNever, type JellyfinEmbyServerType } from '@tracearr/shared';
 import {
   fetchJson,
   fetchText,
@@ -24,18 +25,22 @@ import {
   type EmbySyncJobItem,
   type ItemMediaSource,
 } from './jellyfinEmbyParser.js';
-import type {
-  IMediaServerClient,
-  IMediaServerClientWithHistory,
-  MediaSession,
-  MediaUser,
-  MediaLibrary,
-  MediaLibraryItem,
-  MediaWatchHistoryItem,
-  MediaServerAuth,
-  MediaServerConfig,
-  DownloadSourceDescription,
-  DownloadSourceRequest,
+import {
+  NOT_NEEDED,
+  cursorDate,
+  type IMediaServerClient,
+  type IMediaServerClientWithHistory,
+  type MediaSession,
+  type MediaUser,
+  type MediaLibrary,
+  type MediaLibraryItem,
+  type MediaWatchHistoryItem,
+  type MediaServerAuth,
+  type MediaServerConfig,
+  type DownloadSourceDescription,
+  type DownloadSourceRequest,
+  type NotNeeded,
+  type SyncCursor,
 } from '../types.js';
 
 // Client identification constants
@@ -74,6 +79,35 @@ function libraryAllItemTypes(libraryType?: string): string {
 
 export function buildJellyfinEmbyAuthHeader(token: string): string {
   return `MediaBrowser Client="${CLIENT_NAME}", Device="${DEVICE_NAME}", DeviceId="${DEVICE_ID}", Version="${CLIENT_VERSION}", Token="${token}"`;
+}
+
+/** The header that carries the full MediaBrowser auth value. */
+export function mediaBrowserAuthHeader(
+  type: JellyfinEmbyServerType
+): 'Authorization' | 'X-Emby-Authorization' {
+  switch (type) {
+    case 'jellyfin':
+      return 'Authorization';
+    case 'emby':
+      return 'X-Emby-Authorization';
+    default:
+      return assertNever(type);
+  }
+}
+
+/** The header that authenticates a request with the token alone. */
+export function mediaBrowserTokenHeader(
+  type: JellyfinEmbyServerType,
+  token: string
+): Record<string, string> {
+  switch (type) {
+    case 'jellyfin':
+      return { Authorization: `MediaBrowser Token="${token}"` };
+    case 'emby':
+      return { 'X-Emby-Token': token };
+    default:
+      return assertNever(type);
+  }
 }
 
 /**
@@ -128,7 +162,7 @@ export abstract class BaseMediaServerClient
   implements IMediaServerClient, IMediaServerClientWithHistory
 {
   /** Platform identifier for service tagging */
-  public abstract readonly serverType: 'jellyfin' | 'emby';
+  public abstract readonly serverType: JellyfinEmbyServerType;
 
   protected readonly baseUrl: string;
   protected readonly apiKey: string;
@@ -156,10 +190,8 @@ export abstract class BaseMediaServerClient
    * Build headers for API requests
    */
   protected buildHeaders(): Record<string, string> {
-    const authHeaderName =
-      this.serverType === 'jellyfin' ? 'Authorization' : 'X-Emby-Authorization';
     return {
-      [authHeaderName]: this.buildAuthHeader(),
+      [mediaBrowserAuthHeader(this.serverType)]: this.buildAuthHeader(),
       ...jellyfinEmbyHeaders(),
     };
   }
@@ -308,14 +340,15 @@ export abstract class BaseMediaServerClient
    * Handles its own pagination internally — the caller's offset/limit are ignored.
    *
    * @param libraryId - The parent library ID
-   * @param since - Only return items added after this date
+   * @param cursor - Only return items added after its date
    * @returns Items and total count for pagination tracking
    */
   async getLibraryItemsSince(
     libraryId: string,
-    since: Date,
+    cursor: SyncCursor,
     options?: { offset?: number; limit?: number; libraryType?: string }
-  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number; feed: NotNeeded }> {
+    const since = cursorDate(cursor);
     const PAGE_SIZE = 200;
     const allItems: MediaLibraryItem[] = [];
     let serverOffset = 0;
@@ -360,7 +393,7 @@ export abstract class BaseMediaServerClient
       serverOffset += rawCount;
     }
 
-    return { items: allItems, totalCount: allItems.length };
+    return { items: allItems, totalCount: allItems.length, feed: NOT_NEEDED };
   }
 
   /**
@@ -420,14 +453,15 @@ export abstract class BaseMediaServerClient
    * and filters client-side to work around unreliable minDateLastSaved.
    *
    * @param libraryId - The parent library ID
-   * @param since - Only return episodes added after this date
+   * @param cursor - Only return episodes added after its date
    * @returns Episodes and total count for pagination tracking
    */
   async getLibraryLeavesSince(
     libraryId: string,
-    since: Date,
+    cursor: SyncCursor,
     _options?: { offset?: number; limit?: number }
   ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const since = cursorDate(cursor);
     const PAGE_SIZE = 200;
     const allItems: MediaLibraryItem[] = [];
     let serverOffset = 0;
@@ -469,6 +503,36 @@ export abstract class BaseMediaServerClient
     }
 
     return { items: allItems, totalCount: allItems.length };
+  }
+
+  // Changes are listed after a date, which the sync takes when it saves
+  async getLibraryRevision(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  // Seasons arrive with getLibraryLeaves and getLibraryLeavesSince
+  async getLibrarySeasons(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  // Seasons arrive with getLibraryLeaves and getLibraryLeavesSince
+  async getLibrarySeasonsSince(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  // Albums arrive with getLibraryItems and getLibraryItemsSince
+  async getLibraryAlbums(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  // Albums arrive with getLibraryItems and getLibraryItemsSince
+  async getLibraryAlbumsSince(): Promise<NotNeeded> {
+    return NOT_NEEDED;
+  }
+
+  // The server drops an item whose files are gone, so its listings never report a missing file
+  async checkFilesExist(): Promise<NotNeeded> {
+    return NOT_NEEDED;
   }
 
   // ==========================================================================
@@ -863,7 +927,7 @@ export abstract class BaseMediaServerClient
 
   /** POSTs a sign-in and returns the user token, or null when the server refuses it. */
   protected static async requestUserToken(
-    service: 'jellyfin' | 'emby',
+    service: JellyfinEmbyServerType,
     serverUrl: string,
     path: string,
     headers: Record<string, string>,
@@ -896,7 +960,7 @@ export abstract class BaseMediaServerClient
 
   /** Reads the user a member token belongs to; null when the server rejects the token. */
   protected static async requestTokenUser(
-    service: 'jellyfin' | 'emby',
+    service: JellyfinEmbyServerType,
     url: string,
     headers: Record<string, string>
   ): Promise<{ id: string; isDisabled: boolean } | null> {
@@ -917,7 +981,7 @@ export abstract class BaseMediaServerClient
   }
 
   protected static async postTokenLogout(
-    service: 'jellyfin' | 'emby',
+    service: JellyfinEmbyServerType,
     serverUrl: string,
     headers: Record<string, string>
   ): Promise<void> {

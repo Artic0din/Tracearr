@@ -38,7 +38,7 @@ jobs:
           ref: ${{ inputs.branch }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -84,7 +84,7 @@ jobs:
           ref: ${{ inputs.branch }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -111,9 +111,25 @@ jobs:
         run: pnpm --filter @tracearr/server test:${{ matrix.group }}
 
   test-integration:
-    name: Test (integration)
+    name: Test (integration, ${{ matrix.db.label }}, ${{ matrix.part.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same databases and split as ci.yml
+        db:
+          - label: floor-pg15-ts2.28
+            image: timescale/timescaledb:2.28.3-pg15@sha256:6343bdc87ca132c6b53acb26113a6bad1821d188fa39975a745f32ddd9757634
+          - label: tip-pg18-ts2.29
+            image: timescale/timescaledb:2.29.1-pg18@sha256:373eb0fee9c0f8e0b4b0d4e74c7d0dd463dce05de6b49982701c4b540e94cba0
+        part:
+          - name: suite 1/2
+            args: --exclude '**/catalogExplain.integration.test.ts' --shard=1/2
+          - name: suite 2/2
+            args: --exclude '**/catalogExplain.integration.test.ts' --shard=2/2
+          - name: explain gate
+            args: catalogExplain
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}
@@ -122,7 +138,7 @@ jobs:
 
     services:
       timescale:
-        image: timescale/timescaledb:2.25.0-pg16@sha256:9e9f50161784dc57d3f547b89ded4af73553f9acb4677345ed05f45af7c7f664
+        image: ${{ matrix.db.image }}
         ports:
           - 5433:5432
         env:
@@ -137,7 +153,7 @@ jobs:
           --health-retries 10
 
       redis:
-        image: redis:8-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+        image: redis:8-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
         ports:
           - 6380:6379
         options: >-
@@ -153,7 +169,7 @@ jobs:
           ref: ${{ inputs.branch }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -177,7 +193,7 @@ jobs:
         run: pnpm turbo run build --filter=@tracearr/shared --filter=@tracearr/emails --filter=@tracearr/test-utils
 
       - name: Run integration tests
-        run: pnpm --filter @tracearr/server test:integration
+        run: pnpm --filter @tracearr/server test:integration ${{ matrix.part.args }}
 
   build-docker:
     name: Build Docker (${{ matrix.platform }})
@@ -203,6 +219,13 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
 
+      # A dispatched run has no head commit, and github.sha is the ref it was started from
+      - name: Read the built commit
+        id: commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+
       - name: Update GeoIP database
         uses: ./.github/actions/fetch-geoip
         # The committed databases stay in place when MaxMind is unreachable
@@ -217,7 +240,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -243,9 +266,9 @@ jobs:
           build-args: |
             APP_VERSION=${{ inputs.version }}
             APP_TAG=insiders
-            APP_COMMIT=${{ github.sha }}
-            APP_BUILD_DATE=${{ github.event.head_commit.timestamp }}
-            CACHE_BUST=${{ github.sha }}
+            APP_COMMIT=${{ steps.commit.outputs.sha }}
+            APP_BUILD_DATE=${{ steps.commit.outputs.date }}
+            CACHE_BUST=${{ steps.commit.outputs.sha }}
 
       - name: Export digest
         run: |
@@ -281,7 +304,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -326,6 +349,13 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
 
+      # A dispatched run has no head commit, and github.sha is the ref it was started from
+      - name: Read the built commit
+        id: commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+
       - name: Update GeoIP database
         uses: ./.github/actions/fetch-geoip
         # The committed databases stay in place when MaxMind is unreachable
@@ -340,7 +370,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -366,9 +396,9 @@ jobs:
           build-args: |
             APP_VERSION=${{ inputs.version }}
             APP_TAG=supervised-insiders
-            APP_COMMIT=${{ github.sha }}
-            APP_BUILD_DATE=${{ github.event.head_commit.timestamp }}
-            CACHE_BUST=${{ github.sha }}
+            APP_COMMIT=${{ steps.commit.outputs.sha }}
+            APP_BUILD_DATE=${{ steps.commit.outputs.date }}
+            CACHE_BUST=${{ steps.commit.outputs.sha }}
 
       - name: Export digest
         run: |
@@ -404,7 +434,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

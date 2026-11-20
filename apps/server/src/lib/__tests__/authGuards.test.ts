@@ -33,6 +33,7 @@ import {
   assertOwnerKeepsALoginMethod,
   assertCanBeImpersonated,
   canMemberLogin,
+  hasOpenServer,
   nonOwnerMayLogin,
   nonOwnerMayLoginThrough,
   recordSignIn,
@@ -59,11 +60,14 @@ function queueSelects(...results: unknown[][]) {
   });
 }
 
-function loginMethods(methods: Partial<Record<'local' | 'plex' | 'oidc' | 'member', boolean>>) {
+function loginMethods(
+  methods: Partial<Record<'local' | 'plex' | 'oidc' | 'tofa' | 'member', boolean>>
+) {
   vi.mocked(getSetting).mockResolvedValue({
     local: true,
     plex: true,
     oidc: true,
+    tofa: true,
     member: true,
     ...methods,
   } as never);
@@ -306,7 +310,9 @@ describe('canMemberLogin', () => {
 
 describe('usableLoginMethods', () => {
   // Select order: member-login server, any credential password, then the owner's credential row.
-  const creds = (password: boolean, plex: boolean, oidc: boolean) => [{ password, plex, oidc }];
+  const creds = (password: boolean, plex: boolean, oidc: boolean, tofa = false) => [
+    { password, plex, oidc, tofa },
+  ];
 
   beforeEach(() => {
     vi.mocked(getOwnerUser).mockResolvedValue(OWNER as never);
@@ -351,14 +357,29 @@ describe('usableLoginMethods', () => {
     }
   );
 
-  it("ignores the switches for the owner's password and plex when they leave the owner no way in", async () => {
+  it('closes media sign-in while single sign-on only is on, whatever the servers allow', async () => {
+    vi.mocked(getSetting).mockImplementation(async (key) =>
+      key === 'memberSsoOnly'
+        ? (true as never)
+        : ({ local: true, plex: true, oidc: true, member: true } as never)
+    );
+    queueSelects([{ id: 'server' }], [{ id: 'cred' }], creds(true, true, false));
+    expect(await usableLoginMethods()).toMatchObject({ member: false, local: true, plex: true });
+
+    queueSelects([{ id: 'server' }]);
+    await expect(hasOpenServer('plex')).resolves.toBe(false);
+    expect(db.select).toHaveBeenCalledTimes(3);
+  });
+
+  it("ignores the switches for the owner's password, plex and tofa when they leave the owner no way in", async () => {
     oidc.configured = false;
-    loginMethods({ local: false, plex: false, oidc: true });
-    queueSelects([], [{ id: 'cred' }], creds(true, true, true));
+    loginMethods({ local: false, plex: false, oidc: true, tofa: false });
+    queueSelects([], [{ id: 'cred' }], creds(true, true, true, true));
     expect(await usableLoginMethods()).toEqual({
       local: true,
       plex: true,
       oidc: false,
+      tofa: true,
       member: false,
     });
   });
@@ -414,6 +435,13 @@ describe('assertOwnerKeepsALoginMethod', () => {
     await expect(assertOwnerKeepsALoginMethod({ local: false, plex: false })).rejects.toMatchObject(
       { status: 'BAD_REQUEST' }
     );
+  });
+
+  it("refuses to turn off tofa when it is the owner's only way in", async () => {
+    queueSelects([{ password: false, plex: false, oidc: false, tofa: true }]);
+    await expect(assertOwnerKeepsALoginMethod({ tofa: false })).rejects.toMatchObject({
+      status: 'BAD_REQUEST',
+    });
   });
 
   it('never blocks a change that turns nothing off', async () => {

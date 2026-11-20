@@ -1,11 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { APIError } from 'better-auth/api';
 import { setSessionCookie } from 'better-auth/cookies';
-import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
-import type { LoginAccess, UserRole } from '@tracearr/shared';
-import { db } from '../db/client.js';
+import { and, eq, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm';
+import {
+  assertNever,
+  isServerType,
+  type LoginAccess,
+  type UserRole,
+  type JellyfinEmbyServerType,
+} from '@tracearr/shared';
+import { db, type Executor } from '../db/client.js';
 import { authAccounts, servers, serverUsers, users } from '../db/schema.js';
-import { EmbyClient, JellyfinClient } from '../services/mediaServer/index.js';
+import { EmbyClient, JellyfinClient, logoutUserToken } from '../services/mediaServer/index.js';
 import { getOwnerUser } from '../services/userService.js';
 import { getSetting } from '../services/settings.js';
 import { createLogger } from '../utils/logger.js';
@@ -13,6 +19,7 @@ import {
   canMemberLogin,
   identityGate,
   liveServerAccount,
+  mediaSignInClosed,
   memberGateError,
   nonOwnerMayLogin,
   nonOwnerMayLoginThrough,
@@ -29,7 +36,7 @@ export interface MemberLoginInput {
   serverUrl: string;
   externalId: string;
   token: string;
-  providerId: 'jellyfin' | 'emby';
+  providerId: JellyfinEmbyServerType;
   deviceId: string;
 }
 
@@ -48,8 +55,7 @@ export async function createSignedInSession(ctx: Ctx, userId: string) {
 // The token is already a device on the media server; one Tracearr will not use is logged out
 // there rather than left behind.
 async function discardToken(input: MemberLoginInput, token: string): Promise<void> {
-  const client = input.providerId === 'jellyfin' ? JellyfinClient : EmbyClient;
-  await client.logoutUserToken(input.serverUrl, token).catch(() => {
+  await logoutUserToken(input.providerId, input.serverUrl, token).catch(() => {
     log.warn('could not log out an unused member token', { serverId: input.serverId });
   });
 }
@@ -65,6 +71,29 @@ export async function writeWithoutParams<T>(
     log.error('could not store a sign-in account', ids);
     throw new APIError('INTERNAL_SERVER_ERROR', { message: 'Sign-in failed. Try again later.' });
   }
+}
+
+/**
+ * The tofa sign-in row for a cloud identity, moved onto userId when another person holds it. A
+ * moved row takes a new id: merge audits record the rows a merge brought by id, and a row that
+ * changed hands outside a merge is no longer one that merge brought.
+ */
+export function upsertTofaAccount(userId: string, identityId: string, executor: Executor = db) {
+  return writeWithoutParams(
+    () =>
+      executor
+        .insert(authAccounts)
+        .values({ id: randomUUID(), providerId: 'tofa', accountId: identityId, userId })
+        .onConflictDoUpdate({
+          target: [authAccounts.providerId, authAccounts.accountId],
+          set: {
+            id: sql`case when ${authAccounts.userId} = excluded.user_id then ${authAccounts.id} else excluded.id end`,
+            userId,
+            updatedAt: new Date(),
+          },
+        }),
+    { userId }
+  );
 }
 
 export async function finishMemberLogin(ctx: Ctx, input: MemberLoginInput) {
@@ -118,15 +147,38 @@ export async function finishMemberLogin(ctx: Ctx, input: MemberLoginInput) {
         }),
     { userId: account.userId, serverId: input.serverId }
   );
-  // scope holds the DeviceId the stored token was issued to. Jellyfin already revoked the old
-  // token when the same DeviceId signed in again; Emby keeps both.
-  const replacedOnServer = input.providerId === 'jellyfin' && stored?.deviceId === input.deviceId;
+  // scope holds the DeviceId the stored token was issued to.
+  const replacedOnServer =
+    revokesTokenOnSameDeviceSignIn(input.providerId) && stored?.deviceId === input.deviceId;
   if (stored?.token && stored.token !== input.token && !replacedOnServer) {
     await discardToken(input, stored.token);
   }
 
   const user = await createSignedInSession(ctx, account.userId);
   return ctx.json({ authorized: true, user });
+}
+
+/** Jellyfin revokes the old token when the same DeviceId signs in again; Emby keeps both. */
+function revokesTokenOnSameDeviceSignIn(type: JellyfinEmbyServerType): boolean {
+  switch (type) {
+    case 'jellyfin':
+      return true;
+    case 'emby':
+      return false;
+    default:
+      return assertNever(type);
+  }
+}
+
+function fetchSelf(type: JellyfinEmbyServerType, url: string, token: string, userId: string) {
+  switch (type) {
+    case 'jellyfin':
+      return JellyfinClient.fetchSelf(url, token);
+    case 'emby':
+      return EmbyClient.fetchSelf(url, token, userId);
+    default:
+      return assertNever(type);
+  }
 }
 
 type MediaAccount = { providerId: string; accountId: string; token: string | null };
@@ -137,16 +189,37 @@ async function mediaAccountIsAWayIn(
   memberSwitch: boolean,
   account: MediaAccount
 ): Promise<boolean> {
+  const type = account.providerId;
+  if (!isServerType(type)) return false;
   const live = and(eq(serverUsers.userId, userId), liveServerAccount);
-  if (account.providerId === 'plex') {
+  // plex.tv and tofa cloud vouch for the person; the sync's view of their server accounts is what
+  // keeps them signed in, so no server is asked.
+  const syncedAccountIsAWayIn = async (match: SQL | undefined) => {
     const rows = await db
       .select({ serverAllowsMembers: servers.allowMemberLogin })
       .from(serverUsers)
       .innerJoin(servers, eq(servers.id, serverUsers.serverId))
-      .where(and(live, eq(servers.type, 'plex'), eq(serverUsers.plexAccountId, account.accountId)));
+      .where(and(live, match));
     return rows.some((row) =>
       nonOwnerMayLoginThrough(identity, memberSwitch, row.serverAllowsMembers)
     );
+  };
+  switch (type) {
+    case 'plex':
+      return syncedAccountIsAWayIn(
+        and(eq(servers.type, 'plex'), eq(serverUsers.plexAccountId, account.accountId))
+      );
+    case 'tofa':
+      return syncedAccountIsAWayIn(
+        and(eq(servers.type, 'tofa'), eq(serverUsers.cloudIdentityId, account.accountId))
+      );
+    case 'jellyfin':
+    case 'emby':
+      break;
+    case 'silo':
+      return false;
+    default:
+      return assertNever(type);
   }
 
   const [serverId, externalId] = account.accountId.split(':');
@@ -162,10 +235,7 @@ async function mediaAccountIsAWayIn(
     return false;
   }
   try {
-    const self =
-      account.providerId === 'jellyfin'
-        ? await JellyfinClient.fetchSelf(row.url, account.token)
-        : await EmbyClient.fetchSelf(row.url, account.token, externalId);
+    const self = await fetchSelf(type, row.url, account.token, externalId);
     return !!self && self.id === externalId && !self.isDisabled;
   } catch {
     log.warn('member revalidation could not reach the server', { userId, serverId });
@@ -186,9 +256,10 @@ export async function memberStillValid(userId: string): Promise<boolean> {
     .limit(1);
   if (!identity || identity.role === 'owner') return true;
 
-  const [{ member }, usable, accounts] = await Promise.all([
+  const [{ member }, usable, mediaClosed, accounts] = await Promise.all([
     getSetting('loginMethods'),
     usableLoginMethods(),
+    mediaSignInClosed(),
     db
       .select({
         providerId: authAccounts.providerId,
@@ -208,7 +279,7 @@ export async function memberStillValid(userId: string): Promise<boolean> {
       (usable.oidc &&
         accounts.some((a) => a.providerId === 'oidc') &&
         (await oidcMemberGate(userId, null)).ok) ||
-      (await someMediaAccountIsAWayIn(userId, identity, member, accounts)));
+      (!mediaClosed && (await someMediaAccountIsAWayIn(userId, identity, member, accounts))));
   if (!stillIn) log.info('member revalidation ended a session', { userId });
   return stillIn;
 }
@@ -220,7 +291,6 @@ async function someMediaAccountIsAWayIn(
   accounts: MediaAccount[]
 ): Promise<boolean> {
   for (const account of accounts) {
-    if (!['jellyfin', 'emby', 'plex'].includes(account.providerId)) continue;
     if (await mediaAccountIsAWayIn(userId, identity, memberSwitch, account)) return true;
   }
   return false;

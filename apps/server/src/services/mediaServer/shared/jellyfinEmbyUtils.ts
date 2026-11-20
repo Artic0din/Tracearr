@@ -288,16 +288,32 @@ function getStreamDecisionsFallback(
 }
 
 /**
- * Stream decision logic for Jellyfin
+ * Stream decision logic for Jellyfin.
+ *
+ * Jellyfin copies PlayMethod verbatim from the client's report, and clients label a
+ * static raw-file play DirectStream. TranscodingInfo exists only while the server runs
+ * ffmpeg, so it decides when present: copied streams are a remux, anything else a
+ * transcode. Without it, only a Transcode report means the server is encoding.
+ *
+ * An audio-only job has a null VideoCodec and IsVideoDirect false, since there is no
+ * video to copy; its video decision is directplay, as Plex reports music.
  */
 export function getStreamDecisionsJellyfin(session: Record<string, unknown>): StreamDecisions {
   const { playMethod, transcodingInfo, isVideoDirect, isAudioDirect } = extractStreamFlags(session);
 
-  if (playMethod) {
-    return normalizePlayMethod(playMethod, isVideoDirect, isAudioDirect);
+  if (transcodingInfo) {
+    const decisions = normalizePlayMethod('transcode', isVideoDirect, isAudioDirect);
+    if (parseOptionalString(transcodingInfo.VideoCodec)) return decisions;
+    return {
+      videoDecision: 'directplay',
+      audioDecision: decisions.audioDecision,
+      isTranscode: decisions.audioDecision === 'transcode',
+    };
   }
 
-  return getStreamDecisionsFallback(transcodingInfo);
+  return playMethod?.toLowerCase() === 'transcode'
+    ? normalizePlayMethod(playMethod)
+    : DIRECT_PLAY_RESULT;
 }
 
 /**
@@ -358,7 +374,9 @@ export function buildUserImagePath(
 export function extractLiveTvMetadata(
   nowPlaying: Record<string, unknown>
 ): { channelTitle: string; channelIdentifier?: string; channelThumb?: string } | undefined {
-  const channelId = parseOptionalString(nowPlaying.ChannelId);
+  // A channel item is the channel itself; its own ChannelId is empty or all zeros
+  const ownerId = parseOptionalString(nowPlaying.ChannelId);
+  const channelId = ownerId && /[^0-]/.test(ownerId) ? ownerId : parseOptionalString(nowPlaying.Id);
   const channelTitle =
     parseBoundedString(nowPlaying.ChannelName, 255) || parseBoundedString(nowPlaying.Name, 255);
 

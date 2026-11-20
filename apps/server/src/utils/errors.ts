@@ -5,7 +5,7 @@
 
 import type { FastifyInstance, FastifyError } from 'fastify';
 import type { ZodError } from 'zod';
-import { ErrorCodes, type ApiError, type ErrorCode } from '@tracearr/shared';
+import { ErrorCodes, type ApiError, type ErrorCode, type ServerType } from '@tracearr/shared';
 
 export { ErrorCodes, type ErrorCode };
 
@@ -183,14 +183,16 @@ export class ServiceUnavailableError extends AppError {
 }
 
 /**
- * External service error (Plex, Jellyfin, Emby, etc.)
+ * External service error (Plex, Jellyfin, Emby, tofa, etc.)
  */
 export class ExternalServiceError extends AppError {
-  constructor(service: 'plex' | 'jellyfin' | 'emby' | 'geoip', message: string) {
+  constructor(service: ServerType | 'geoip', message: string) {
     const codeMap: Record<typeof service, ErrorCode> = {
       plex: ErrorCodes.PLEX_ERROR,
       jellyfin: ErrorCodes.JELLYFIN_ERROR,
       emby: ErrorCodes.EMBY_ERROR,
+      tofa: ErrorCodes.TOFA_ERROR,
+      silo: ErrorCodes.SILO_ERROR,
       geoip: ErrorCodes.GEOIP_ERROR,
     };
     const code = codeMap[service];

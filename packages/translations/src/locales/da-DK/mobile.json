@@ -133,6 +133,7 @@
     "noTerminations": "",
     "lastSeen": "",
     "terminatedBy": "",
+    "terminatedByName": "",
     "trustScoreConfirm": "",
     "trustScoreRange": "",
     "moreLocations_one": "",
@@ -188,7 +189,7 @@
   },
   "activity": {
     "playsOverTime": "Afspilninger over tid",
-    "concurrentStreams": "",
+    "concurrentStreams": "Samtidige Streams",
     "platforms": "Platforme",
     "playbackQuality": ""
   },

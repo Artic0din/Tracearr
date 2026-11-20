@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import sensible from '@fastify/sensible';
 import { randomUUID } from 'node:crypto';
+import { APIError } from 'better-auth/api';
 import { WS_EVENTS, type AuthUser } from '@tracearr/shared';
 
 // Mock dependencies before imports
@@ -21,6 +22,7 @@ vi.mock('../../db/client.js', () => ({
     insert: vi.fn(),
     delete: vi.fn(),
     update: vi.fn(),
+    execute: vi.fn(),
     transaction: vi.fn(),
   },
 }));
@@ -30,9 +32,14 @@ vi.mock('../../utils/crypto.js', () => ({
   decrypt: vi.fn((token: string) => token.replace('encrypted_', '')),
 }));
 
+const { mockTofaIdentity } = vi.hoisted(() => ({ mockTofaIdentity: vi.fn() }));
+
 vi.mock('../../services/mediaServer/index.js', () => ({
+  verifyServerAdmin: vi.fn(),
+  TofaClient: class {
+    getServerIdentity = mockTofaIdentity;
+  },
   PlexClient: {
-    verifyServerAdmin: vi.fn(),
     getAccountInfo: vi.fn(),
     AdminVerifyError: {
       CONNECTION_FAILED: 'CONNECTION_FAILED',
@@ -40,15 +47,6 @@ vi.mock('../../services/mediaServer/index.js', () => ({
     },
   },
   JellyfinClient: {
-    verifyServerAdmin: vi.fn(),
-    AdminVerifyError: {
-      CONNECTION_FAILED: 'CONNECTION_FAILED',
-      INVALID_KEY: 'INVALID_KEY',
-      NOT_ADMIN: 'NOT_ADMIN',
-    },
-  },
-  EmbyClient: {
-    verifyServerAdmin: vi.fn(),
     AdminVerifyError: {
       CONNECTION_FAILED: 'CONNECTION_FAILED',
       INVALID_KEY: 'INVALID_KEY',
@@ -75,6 +73,7 @@ vi.mock('../../jobs/serverUpdateChecker.js', () => ({
 
 vi.mock('../../jobs/librarySyncQueue.js', () => ({
   enqueueLibrarySync: vi.fn().mockResolvedValue(undefined),
+  markFirstSyncOwed: vi.fn().mockResolvedValue(undefined),
   rebuildAutoSyncSchedules: vi.fn().mockResolvedValue(undefined),
   scheduleAutoSync: vi.fn().mockResolvedValue(undefined),
 }));
@@ -108,21 +107,44 @@ vi.mock('../../services/settings.js', () => ({
 
 vi.mock('../../lib/revoke.js', () => ({ revokeUnlessStillIn: vi.fn() }));
 
+vi.mock('../../lib/authGuards.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/authGuards.js')>()),
+  assertOwnerKeepsALoginAfter: vi.fn(),
+}));
+
+vi.mock('../../jobs/requestSyncQueue.js', () => ({
+  scheduleRequestSync: vi.fn().mockResolvedValue(undefined),
+  enqueueRequestSync: vi.fn().mockResolvedValue('job-1'),
+}));
+
+vi.mock('../../jobs/importQueue.js', () => ({
+  holdTofaImport: vi.fn().mockResolvedValue(undefined),
+  dropHeldImport: vi.fn().mockResolvedValue(undefined),
+}));
+
 import type { SQL } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { rebuildAutoSyncSchedules, scheduleAutoSync } from '../../jobs/librarySyncQueue.js';
+import { dropHeldImport, holdTofaImport } from '../../jobs/importQueue.js';
+import {
+  enqueueLibrarySync,
+  rebuildAutoSyncSchedules,
+  scheduleAutoSync,
+} from '../../jobs/librarySyncQueue.js';
+import { enqueueRequestSync, scheduleRequestSync } from '../../jobs/requestSyncQueue.js';
 import { getCacheService } from '../../services/cache.js';
 import { markServerHistorical, resumeServer } from '../../services/historicalServers.js';
 import { renderSql } from '../../test/helpers.js';
 import { rearmImportedHistoryLink } from '../../services/settings.js';
-import { PlexClient, JellyfinClient, EmbyClient } from '../../services/mediaServer/index.js';
+import { PlexClient, verifyServerAdmin } from '../../services/mediaServer/index.js';
 import { getServerLiveStats, getServerResourceStats } from '../../services/serverLiveStats.js';
 import { syncServer } from '../../services/sync.js';
 import { installedVersionOf } from '../../jobs/serverUpdateChecker.js';
 import { readServerIdentity, sharesKnownUsers } from '../../services/serverIdentity.js';
 import { sseManager } from '../../services/sseManager.js';
 import { revokeUnlessStillIn } from '../../lib/revoke.js';
+import { assertOwnerKeepsALoginAfter } from '../../lib/authGuards.js';
 import { serverRoutes } from '../servers.js';
+import { createServer, startAddedServer } from '../../services/serverCreate.js';
 import { permissionGuard } from '../../lib/scope.js';
 
 // Mock global fetch for image proxy tests
@@ -232,8 +254,23 @@ const mockServer = {
   updatedAt: new Date(),
 };
 
+const LOCKOUT = 'That would leave the owner with no way to sign in.';
+
+function refuseLockout() {
+  vi.mocked(assertOwnerKeepsALoginAfter).mockRejectedValueOnce(
+    new APIError('BAD_REQUEST', { message: LOCKOUT })
+  );
+}
+
 describe('Server Routes', () => {
   let app: FastifyInstance;
+
+  beforeEach(() => {
+    vi.mocked(db.execute).mockResolvedValue({ rows: [] } as never);
+    vi.mocked(db.transaction).mockImplementation(async (fn: unknown) =>
+      (fn as (tx: typeof db) => Promise<unknown>)(db)
+    );
+  });
 
   afterEach(async () => {
     await app?.close();
@@ -355,9 +392,7 @@ describe('Server Routes', () => {
 
   describe('POST /servers', () => {
     beforeEach(() => {
-      vi.mocked(PlexClient.verifyServerAdmin).mockResolvedValue({ success: true });
-      vi.mocked(JellyfinClient.verifyServerAdmin).mockResolvedValue({ success: true });
-      vi.mocked(EmbyClient.verifyServerAdmin).mockResolvedValue({ success: true });
+      vi.mocked(verifyServerAdmin).mockResolvedValue({ success: true });
       vi.mocked(syncServer).mockResolvedValue({
         usersAdded: 5,
         usersUpdated: 0,
@@ -365,6 +400,7 @@ describe('Server Routes', () => {
         usersRemoved: 0,
         usersRestored: 0,
         librariesSynced: 3,
+        usersRead: true,
         errors: [],
       });
     });
@@ -416,7 +452,8 @@ describe('Server Routes', () => {
       });
 
       expect(response.statusCode).toBe(201);
-      expect(PlexClient.verifyServerAdmin).toHaveBeenCalledWith(
+      expect(verifyServerAdmin).toHaveBeenCalledWith(
+        'plex',
         'my-plex-token',
         'http://plex.local:32400'
       );
@@ -506,10 +543,194 @@ describe('Server Routes', () => {
       });
 
       expect(response.statusCode).toBe(201);
-      expect(JellyfinClient.verifyServerAdmin).toHaveBeenCalledWith(
+      expect(verifyServerAdmin).toHaveBeenCalledWith(
+        'jellyfin',
         'my-jellyfin-token',
         'http://jellyfin.local:8096'
       );
+    });
+
+    it('stores whether a tofa API key can stop streams, and the watched rule, when adding it', async () => {
+      app = await buildTestApp(ownerUser);
+      mockFetch.mockImplementation(async (url: string) =>
+        Response.json(
+          url.endsWith('/auth/api-keys')
+            ? [
+                {
+                  key_prefix: 'tofa_3b9e1c',
+                  revoked_at: null,
+                  read_only: true,
+                  can_stop_streams: false,
+                },
+              ]
+            : { version: '0.13.2', watched_rule: { percent: 90 } }
+        )
+      );
+
+      let selectCall = 0;
+      vi.mocked(db.select).mockImplementation(() => {
+        selectCall++;
+        const chain = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+        if (selectCall === 2) {
+          chain.from = vi.fn().mockResolvedValue([]);
+        }
+        return chain as never;
+      });
+      const insert = mockDbInsert([{ ...mockServer, id: randomUUID(), type: 'tofa' }]);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/servers',
+        payload: {
+          name: 'New tofa',
+          type: 'tofa',
+          url: 'http://tofa.local:33333',
+          token: 'tofa_3b9e1c7a5d2f8e4b',
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(insert.values).toHaveBeenCalledWith(
+        expect.objectContaining({ canStopStreams: false, watchedRulePercent: 90 })
+      );
+    });
+
+    it('stores the identity a tofa server added by its key reports', async () => {
+      app = await buildTestApp(ownerUser);
+      mockFetch.mockImplementation(async (url: string) =>
+        Response.json(
+          url.endsWith('/auth/api-keys')
+            ? [{ key_prefix: 'tofa_3b9e1c', revoked_at: null }]
+            : { version: '0.13.2' }
+        )
+      );
+      mockTofaIdentity.mockResolvedValueOnce('tofa-server-1');
+      let selectCall = 0;
+      vi.mocked(db.select).mockImplementation(() => {
+        selectCall++;
+        const chain = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+        if (selectCall === 3) {
+          chain.from = vi.fn().mockResolvedValue([]);
+        }
+        return chain as never;
+      });
+      const insert = mockDbInsert([{ ...mockServer, id: randomUUID(), type: 'tofa' }]);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/servers',
+        payload: {
+          name: 'New tofa',
+          type: 'tofa',
+          url: 'http://tofa.local:33333',
+          token: 'tofa_3b9e1c7a5d2f8e4b',
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(insert.values).toHaveBeenCalledWith(
+        expect.objectContaining({ machineIdentifier: 'tofa-server-1' })
+      );
+    });
+
+    it('refuses a tofa server already connected at another address', async () => {
+      app = await buildTestApp(ownerUser);
+      mockFetch.mockImplementation(async (url: string) =>
+        Response.json(
+          url.endsWith('/auth/api-keys')
+            ? [{ key_prefix: 'tofa_3b9e1c', revoked_at: null }]
+            : { version: '0.13.2' }
+        )
+      );
+      mockTofaIdentity.mockResolvedValueOnce('tofa-server-1');
+      const byUrl = vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: mockServer.id }]);
+      vi.mocked(db.select).mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: byUrl,
+      } as never);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/servers',
+        payload: {
+          name: 'New tofa',
+          type: 'tofa',
+          url: 'http://192.168.1.20:33333',
+          token: 'tofa_3b9e1c7a5d2f8e4b',
+        },
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().message).toBe('This server is already connected');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('creates the built-in request service in the transaction that adds a tofa server', async () => {
+      app = await buildTestApp(ownerUser);
+      mockFetch.mockImplementation(async (url: string) =>
+        Response.json(
+          url.endsWith('/auth/api-keys')
+            ? [{ key_prefix: 'tofa_3b9e1c', revoked_at: null }]
+            : { version: '0.13.2' }
+        )
+      );
+      let selectCall = 0;
+      vi.mocked(db.select).mockImplementation(() => {
+        selectCall++;
+        const chain = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+        if (selectCall === 2) {
+          chain.from = vi.fn().mockResolvedValue([]);
+        }
+        return chain as never;
+      });
+      mockDbInsert([{ ...mockServer, id: randomUUID(), type: 'tofa' }]);
+      const serviceId = randomUUID();
+      const tx = {
+        insert: db.insert,
+        execute: vi.fn(async (_query: SQL) => ({ rows: [{ id: serviceId }] })),
+      };
+      vi.mocked(db.transaction).mockImplementation(async (fn: unknown) =>
+        (fn as (executor: typeof tx) => Promise<unknown>)(tx)
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/servers',
+        payload: {
+          name: 'New tofa',
+          type: 'tofa',
+          url: 'http://tofa.local:33333',
+          token: 'tofa_3b9e1c7a5d2f8e4b',
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(tx.execute).toHaveBeenCalledTimes(1);
+      const insert = tx.execute.mock.calls[0]?.[0];
+      if (!insert) throw new Error('no statement ran on the transaction');
+      expect(renderSql(insert).sql).toContain('INSERT INTO request_services');
+      await vi.waitFor(() => expect(enqueueRequestSync).toHaveBeenCalledWith(serviceId, 'full'));
+      expect(scheduleRequestSync).toHaveBeenCalled();
+      const { id } = response.json<{ id: string }>();
+      expect(holdTofaImport).toHaveBeenCalledExactlyOnceWith(id);
+      expect(enqueueLibrarySync).toHaveBeenCalledExactlyOnceWith(id, 'event', { firstSync: true });
+      expect(dropHeldImport).not.toHaveBeenCalled();
     });
 
     it('creates a new Emby server for owner', async () => {
@@ -553,7 +774,8 @@ describe('Server Routes', () => {
       });
 
       expect(response.statusCode).toBe(201);
-      expect(EmbyClient.verifyServerAdmin).toHaveBeenCalledWith(
+      expect(verifyServerAdmin).toHaveBeenCalledWith(
+        'emby',
         'my-emby-token',
         'http://emby.local:8096'
       );
@@ -617,7 +839,7 @@ describe('Server Routes', () => {
         },
       });
       expect(plex.statusCode).toBe(400);
-      expect(plex.json().message).toBe('Public address applies to Jellyfin and Emby servers only');
+      expect(plex.json().message).toBe('Plex servers take no public address');
     });
 
     it('rejects guest creating server', async () => {
@@ -663,7 +885,7 @@ describe('Server Routes', () => {
       app = await buildTestApp(ownerUser);
 
       mockDbSelectLimit([]);
-      vi.mocked(PlexClient.verifyServerAdmin).mockResolvedValue({
+      vi.mocked(verifyServerAdmin).mockResolvedValue({
         success: false,
         code: 'NOT_ADMIN',
         message: 'You must be an admin on this Plex server',
@@ -688,7 +910,7 @@ describe('Server Routes', () => {
       app = await buildTestApp(ownerUser);
 
       mockDbSelectLimit([]);
-      vi.mocked(JellyfinClient.verifyServerAdmin).mockResolvedValue({
+      vi.mocked(verifyServerAdmin).mockResolvedValue({
         success: false,
         code: 'INVALID_KEY',
         message: 'Jellyfin rejected this API key (it may be invalid or expired).',
@@ -713,7 +935,7 @@ describe('Server Routes', () => {
       app = await buildTestApp(ownerUser);
 
       mockDbSelectLimit([]);
-      vi.mocked(EmbyClient.verifyServerAdmin).mockResolvedValue({
+      vi.mocked(verifyServerAdmin).mockResolvedValue({
         success: false,
         code: 'CONNECTION_FAILED',
         message: 'Cannot reach Emby server at http://emby.local:8096. ECONNREFUSED',
@@ -738,7 +960,7 @@ describe('Server Routes', () => {
       app = await buildTestApp(ownerUser);
 
       mockDbSelectLimit([]);
-      vi.mocked(EmbyClient.verifyServerAdmin).mockResolvedValue({
+      vi.mocked(verifyServerAdmin).mockResolvedValue({
         success: false,
         code: 'INVALID_KEY',
         message: 'Emby rejected this API key (it may be invalid or expired).',
@@ -763,7 +985,7 @@ describe('Server Routes', () => {
       app = await buildTestApp(ownerUser);
 
       mockDbSelectLimit([]);
-      vi.mocked(PlexClient.verifyServerAdmin).mockRejectedValue(new Error('Connection refused'));
+      vi.mocked(verifyServerAdmin).mockRejectedValue(new Error('Connection refused'));
 
       const response = await app.inject({
         method: 'POST',
@@ -865,6 +1087,53 @@ describe('Server Routes', () => {
       expect(db.update).toHaveBeenCalled();
     });
 
+    it('renames and readdresses a tofa server built-in request service in the same transaction', async () => {
+      app = await buildTestApp(ownerUser);
+      const tofaServer = { ...mockServer, type: 'tofa' as const, url: 'http://tofa.local:33333' };
+      mockDbSelectLimit([tofaServer]);
+      const update = mockDbUpdateReturning([{ ...tofaServer, name: 'Den' }]);
+      const tx = {
+        update: db.update,
+        execute: vi.fn(async (_query: SQL) => ({ rows: [] })),
+      };
+      vi.mocked(db.transaction).mockImplementation(async (fn: unknown) =>
+        (fn as (executor: typeof tx) => Promise<unknown>)(tx)
+      );
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/servers/${tofaServer.id}`,
+        payload: { name: 'Den' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(update.set).toHaveBeenCalledWith({ name: 'Den', updatedAt: expect.any(Date) });
+      const follow = tx.execute.mock.calls[0]?.[0];
+      if (!follow) throw new Error('no statement ran on the transaction');
+      expect(renderSql(follow).sql).toContain(
+        'UPDATE request_services SET name = servers.name, url = servers.url'
+      );
+    });
+
+    it('opens member sign-in through a tofa server, whose members sign in with tofa', async () => {
+      app = await buildTestApp(ownerUser);
+      const server = { ...mockServer, type: 'tofa' as const, allowMemberLogin: false };
+      mockDbSelectLimit([server]);
+      const update = mockDbUpdateReturning([{ ...server, allowMemberLogin: true }]);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/servers/${server.id}`,
+        payload: { allowMemberLogin: true },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(update.set).toHaveBeenCalledWith({
+        allowMemberLogin: true,
+        updatedAt: expect.any(Date),
+      });
+    });
+
     it('saves a public address on a Jellyfin server, clears it on an empty string, and refuses it on Plex', async () => {
       app = await buildTestApp(ownerUser);
       const jellyfin = {
@@ -908,7 +1177,7 @@ describe('Server Routes', () => {
         payload: { publicUrl: 'https://plex.example.com' },
       });
       expect(plex.statusCode).toBe(400);
-      expect(plex.json().message).toBe('Public address applies to Jellyfin and Emby servers only');
+      expect(plex.json().message).toBe('Plex servers take no public address');
     });
 
     it('checks a new Jellyfin API key against the saved URL and server before storing it', async () => {
@@ -920,7 +1189,7 @@ describe('Server Routes', () => {
         token: 'old-key',
         machineIdentifier: 'jf-1',
       };
-      vi.mocked(JellyfinClient.verifyServerAdmin).mockResolvedValue({ success: true });
+      vi.mocked(verifyServerAdmin).mockResolvedValue({ success: true });
       vi.mocked(readServerIdentity).mockResolvedValue('jf-1');
       mockDbSelectLimit([jellyfin]);
       const update = mockDbUpdateReturning([jellyfin]);
@@ -932,7 +1201,8 @@ describe('Server Routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(JellyfinClient.verifyServerAdmin).toHaveBeenCalledWith(
+      expect(verifyServerAdmin).toHaveBeenCalledWith(
+        'jellyfin',
         'new-key',
         'http://192.168.1.20:8096'
       );
@@ -952,7 +1222,7 @@ describe('Server Routes', () => {
         token: 'old-key',
         machineIdentifier: null,
       };
-      vi.mocked(JellyfinClient.verifyServerAdmin).mockResolvedValue({ success: true });
+      vi.mocked(verifyServerAdmin).mockResolvedValue({ success: true });
       vi.mocked(readServerIdentity).mockResolvedValueOnce('jf-1').mockResolvedValueOnce('jf-1');
       mockDbSelectLimit([jellyfin]);
       const update = mockDbUpdateReturning([jellyfin]);
@@ -964,10 +1234,7 @@ describe('Server Routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(JellyfinClient.verifyServerAdmin).toHaveBeenCalledWith(
-        'new-key',
-        'http://new-host:8096'
-      );
+      expect(verifyServerAdmin).toHaveBeenCalledWith('jellyfin', 'new-key', 'http://new-host:8096');
       expect(readServerIdentity).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({ url: 'http://192.168.1.20:8096', token: 'old-key' })
@@ -993,7 +1260,7 @@ describe('Server Routes', () => {
         token: 'old-key',
         machineIdentifier: 'emby-1',
       };
-      vi.mocked(EmbyClient.verifyServerAdmin).mockResolvedValue({ success: true });
+      vi.mocked(verifyServerAdmin).mockResolvedValue({ success: true });
 
       mockDbSelectLimit([emby]);
       vi.mocked(readServerIdentity).mockResolvedValueOnce('emby-2');
@@ -1030,7 +1297,7 @@ describe('Server Routes', () => {
         token: 'revoked-key',
         machineIdentifier: null,
       };
-      vi.mocked(JellyfinClient.verifyServerAdmin).mockResolvedValue({ success: true });
+      vi.mocked(verifyServerAdmin).mockResolvedValue({ success: true });
       vi.mocked(readServerIdentity)
         .mockRejectedValueOnce(new Error('401'))
         .mockResolvedValueOnce('jf-1');
@@ -1067,8 +1334,24 @@ describe('Server Routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(JellyfinClient.verifyServerAdmin).not.toHaveBeenCalled();
+      expect(verifyServerAdmin).not.toHaveBeenCalled();
       expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('answers a change that changes nothing with whether the key may stop streams', async () => {
+      app = await buildTestApp(ownerUser);
+      const tofaServer = { ...mockServer, type: 'tofa' as const, canStopStreams: false };
+      mockDbSelectLimit([tofaServer]);
+
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/servers/${tofaServer.id}`,
+        payload: { name: tofaServer.name },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(db.update).not.toHaveBeenCalled();
+      expect(response.json()).toMatchObject({ canStopStreams: false });
     });
 
     it('keeps the old Emby key when the new one is refused, and refuses a key on Plex', async () => {
@@ -1079,7 +1362,7 @@ describe('Server Routes', () => {
         url: 'http://192.168.1.30:8096',
         token: 'old-key',
       };
-      vi.mocked(EmbyClient.verifyServerAdmin).mockResolvedValue({
+      vi.mocked(verifyServerAdmin).mockResolvedValue({
         success: false,
         code: 'INVALID_KEY',
         message: 'Invalid API key',
@@ -1096,6 +1379,7 @@ describe('Server Routes', () => {
       expect(db.update).not.toHaveBeenCalled();
 
       mockDbSelectLimit([mockServer]);
+      vi.mocked(verifyServerAdmin).mockClear();
       const plex = await app.inject({
         method: 'PATCH',
         url: `/servers/${mockServer.id}`,
@@ -1105,7 +1389,7 @@ describe('Server Routes', () => {
       expect(plex.json().message).toBe(
         'Plex servers sign in through plex.tv and have no API key to change'
       );
-      expect(PlexClient.verifyServerAdmin).not.toHaveBeenCalled();
+      expect(verifyServerAdmin).not.toHaveBeenCalled();
       expect(readServerIdentity).not.toHaveBeenCalled();
       expect(db.update).not.toHaveBeenCalled();
     });
@@ -1167,7 +1451,7 @@ describe('Server Routes', () => {
       });
       expect(response.statusCode).toBe(409);
       expect(response.json().message).toBe('Resume this server to change its address or key');
-      expect(JellyfinClient.verifyServerAdmin).not.toHaveBeenCalled();
+      expect(verifyServerAdmin).not.toHaveBeenCalled();
 
       mockDbSelectLimit([historical]);
       response = await app.inject({
@@ -1203,6 +1487,27 @@ describe('Server Routes', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.json().success).toBe(true);
+      expect(dropHeldImport).toHaveBeenCalledExactlyOnceWith(mockServer.id);
+    });
+
+    it("refuses to delete the server holding the owner's last way to sign in", async () => {
+      app = await buildTestApp(ownerUser);
+      mockDbSelectLimit([mockServer]);
+      const remove = mockDbDelete();
+      refuseLockout();
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: `/servers/${mockServer.id}`,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe(LOCKOUT);
+      expect(assertOwnerKeepsALoginAfter).toHaveBeenCalledWith({
+        kind: 'deleteServer',
+        serverId: mockServer.id,
+      });
+      expect(remove.where).not.toHaveBeenCalled();
     });
 
     it('rejects guest deleting server', async () => {
@@ -1245,7 +1550,7 @@ describe('Server Routes', () => {
     it('announces a created server', async () => {
       app = await buildTestApp(ownerUser);
 
-      vi.mocked(PlexClient.verifyServerAdmin).mockResolvedValue({ success: true });
+      vi.mocked(verifyServerAdmin).mockResolvedValue({ success: true });
       vi.mocked(PlexClient.getAccountInfo).mockResolvedValue({
         id: 'plex-account-123',
         username: 'admin',
@@ -1258,6 +1563,7 @@ describe('Server Routes', () => {
         usersRemoved: 0,
         usersRestored: 0,
         librariesSynced: 0,
+        usersRead: true,
         errors: [],
       });
 
@@ -1359,6 +1665,7 @@ describe('Server Routes', () => {
         usersRemoved: 0,
         usersRestored: 0,
         librariesSynced: 5,
+        usersRead: true,
         errors: [],
       });
     });
@@ -1413,6 +1720,7 @@ describe('Server Routes', () => {
         usersRemoved: 0,
         usersRestored: 0,
         librariesSynced: 0,
+        usersRead: true,
         errors: ['Failed to fetch library 1', 'User sync timeout'],
       });
 
@@ -1724,6 +2032,26 @@ describe('Server Routes', () => {
       expect(body.token).toBeUndefined();
     });
 
+    it("refuses to make historical the server holding the owner's last way to sign in", async () => {
+      app = await buildTestApp(ownerUser);
+      mockDbSelectLimit([mockServer]);
+      refuseLockout();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/servers/${mockServer.id}/historical`,
+        payload: { historical: true },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe(LOCKOUT);
+      expect(assertOwnerKeepsALoginAfter).toHaveBeenCalledWith({
+        kind: 'retireServer',
+        serverId: mockServer.id,
+      });
+      expect(markServerHistorical).not.toHaveBeenCalled();
+    });
+
     it('resumes a historical server', async () => {
       app = await buildTestApp(ownerUser);
       mockDbSelectLimit([flagged]);
@@ -1851,6 +2179,90 @@ describe('Server Routes', () => {
       expect(renderSql(statusChain.where.mock.calls[0]?.[0] as SQL).sql).toContain(
         'servers.historical_at is null'
       );
+    });
+  });
+
+  describe('createServer', () => {
+    it("inserts the owner's account on the new server before the first sync", async () => {
+      const serverId = randomUUID();
+      vi.mocked(db.select).mockReturnValue({ from: vi.fn().mockResolvedValue([]) } as never);
+      const insert = mockDbInsert([{ ...mockServer, id: serverId, type: 'tofa' }]);
+      vi.mocked(syncServer).mockResolvedValue({
+        usersAdded: 0,
+        usersUpdated: 0,
+        usersSkipped: 0,
+        usersRemoved: 0,
+        usersRestored: 0,
+        librariesSynced: 0,
+        usersRead: true,
+        errors: [],
+      });
+
+      const { server } = await createServer({
+        name: 'tofa',
+        type: 'tofa',
+        url: 'http://192.168.1.122:33333',
+        token: 'tofa_secret',
+        machineIdentifier: 'tofa-server-1',
+        facts: { canStopStreams: true, watchedRulePercent: 90 },
+        ownerServerUser: {
+          userId: 'owner-1',
+          externalId: 'tofa-user-1',
+          username: 'morgan',
+          email: 'morgan@example.com',
+          cloudIdentityId: 'identity-1',
+        },
+      });
+      await startAddedServer(server, []);
+
+      expect(server.id).toBe(serverId);
+      expect(insert.values).toHaveBeenCalledWith(
+        expect.objectContaining({ machineIdentifier: 'tofa-server-1', canStopStreams: true })
+      );
+      expect(insert.values).toHaveBeenCalledWith({
+        userId: 'owner-1',
+        serverId,
+        externalId: 'tofa-user-1',
+        username: 'morgan',
+        email: 'morgan@example.com',
+        cloudIdentityId: 'identity-1',
+        isServerAdmin: true,
+      });
+      const ownerInsert = insert.values.mock.invocationCallOrder[1] ?? Infinity;
+      expect(ownerInsert).toBeLessThan(vi.mocked(syncServer).mock.invocationCallOrder[0] ?? 0);
+    });
+
+    it('keeps the key when a step after the server is saved fails', async () => {
+      const serverId = randomUUID();
+      vi.mocked(db.select).mockReturnValue({ from: vi.fn().mockResolvedValue([]) } as never);
+      mockDbInsert([{ ...mockServer, id: serverId, type: 'plex' }]);
+      vi.mocked(syncServer).mockResolvedValue({
+        usersAdded: 0,
+        usersUpdated: 0,
+        usersSkipped: 0,
+        usersRemoved: 0,
+        usersRestored: 0,
+        librariesSynced: 0,
+        usersRead: true,
+        errors: [],
+      });
+      mockPublish.mockImplementationOnce(() => {
+        throw new Error('redis down');
+      });
+      vi.mocked(rearmImportedHistoryLink).mockRejectedValueOnce(new Error('db down'));
+
+      const { server } = await createServer({
+        name: 'Plex',
+        type: 'plex',
+        url: 'http://plex.local:32400',
+        token: 'plex-token',
+        facts: {},
+      });
+      await startAddedServer(server, []);
+
+      expect(server.id).toBe(serverId);
+      expect(syncServer).toHaveBeenCalledWith(serverId, { syncUsers: true, syncLibraries: false });
+      expect(sseManager.refresh).toHaveBeenCalled();
     });
   });
 });

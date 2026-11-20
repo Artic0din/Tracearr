@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildCompositeKey } from '../stateTracker.js';
+import {
+  buildCompositeKey,
+  canTerminate,
+  pendingKeyFromTrackingKey,
+  pendingSessionKey,
+  terminationSessionId,
+} from '../sessionIdentity.js';
 
 describe('buildCompositeKey', () => {
   describe('JF/Emby servers', () => {
@@ -82,5 +88,44 @@ describe('buildCompositeKey', () => {
         })
       ).toBe('server-3:plex-session-key');
     });
+  });
+});
+
+describe('canTerminate', () => {
+  const sessionKey = 'sess';
+
+  it('plex can terminate only with a session id; jellyfin and emby always can', () => {
+    expect(canTerminate('plex', { plexSessionId: null, sessionKey })).toBe(false);
+    expect(canTerminate('plex', { sessionKey })).toBe(false);
+    expect(canTerminate('plex', { plexSessionId: 'abc', sessionKey })).toBe(true);
+    expect(canTerminate('jellyfin', { plexSessionId: null, sessionKey })).toBe(true);
+    expect(canTerminate('emby', { plexSessionId: null, sessionKey })).toBe(true);
+  });
+
+  it('tofa can terminate a playback session but not a live viewer listed without one', () => {
+    expect(canTerminate('tofa', { sessionKey })).toBe(true);
+    expect(canTerminate('tofa', { sessionKey: 'viewer:viewer-1' })).toBe(false);
+  });
+});
+
+describe('terminationSessionId', () => {
+  it('uses the plex session id on plex and the session key on jellyfin and emby', () => {
+    const session = { plexSessionId: 'plex-id', sessionKey: 'sess' };
+    expect(terminationSessionId('plex', session)).toBe('plex-id');
+    expect(terminationSessionId('plex', { ...session, plexSessionId: null })).toBeNull();
+    expect(terminationSessionId('jellyfin', session)).toBe('sess');
+    expect(terminationSessionId('emby', session)).toBe('sess');
+  });
+});
+
+describe('pending keys', () => {
+  it('pending key is the session key on plex and the tracking key otherwise', () => {
+    expect(pendingSessionKey('plex', 's1:42', '42')).toBe('42');
+    expect(pendingSessionKey('emby', 's1:u:d:r', 'sess')).toBe('s1:u:d:r');
+  });
+
+  it('recovers the pending key from a tracking key', () => {
+    expect(pendingKeyFromTrackingKey('plex', 's1', 's1:42')).toBe('42');
+    expect(pendingKeyFromTrackingKey('jellyfin', 's1', 's1:u:d:r')).toBe('s1:u:d:r');
   });
 });

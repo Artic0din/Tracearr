@@ -2,9 +2,7 @@
   "login": {
     "title": "Tracearr",
     "tagline": "Tracearr - Gestió d'accés a les transmissions",
-    "createAccountHeading": "Creeu el vostre compte per a començar",
     "signInHeading": "Inicieu sessió al vostre compte",
-    "createAccountDescription": "Creeu un compte per gestionar els vostres servidors multimèdia",
     "signInDescription": "Inicieu la sessió per accedir al vostre tauler de control",
     "selectPlexServer": "Seleccioneu el vostre servidor Plex",
     "waitingForPlex": "S'està esperant l'autorització de Plex...",
@@ -19,7 +17,6 @@
     "displayNamePlaceholder": "Trieu un nom de visualització",
     "passwordPlaceholder": "Ha de tenir com a mínim 8 caràcters",
     "yourPasswordPlaceholder": "La teva contrasenya",
-    "setupNote": "Després de crear el vostre compte, podreu afegir els vostres servidors Plex o Jellyfin des de la configuració.",
     "localDisabledHint": "L'inici de sessió local està deshabilitat en aquesta instància. Demaneu a un administrador que executi `enable-local-login` des de la CLI de Tracearr per tornar-lo a habilitar.",
     "oidcError": "L'inici de sessió únic ha fallat. Torneu-ho a provar o utilitzeu un altre mètode d'inici de sessió.",
     "accountCreated": "Compte creat correctament!",
@@ -54,6 +51,60 @@
       "notPermitted": "No teniu permís per iniciar sessió. Si us plau, poseu-vos en contacte amb el propietari del servidor."
     }
   },
+  "setup": {
+    "serverTitle": "Quin servidor multimèdia feu servir?",
+    "connectTitle": "Connecteu el vostre servidor {{server}}",
+    "connectDescription": "Tracearr supervisa l'activitat d'aquest servidor. Podeu afegir-ne d'altres més endavant a Configuració.",
+    "linkPlexTitle": "Enllaceu el vostre compte de Plex",
+    "linkPlexDescription": "Tracearr troba els vostres servidors de Plex a través del vostre compte de Plex.",
+    "stepsLabel": "Passos de la configuració",
+    "stepOfNamed": "Pas {{step}} de {{total}}: {{name}}",
+    "steps": {
+      "server": "Servidor multimèdia",
+      "account": "Compte de propietari",
+      "connect": "Connexió del servidor",
+      "import": "Importació de l'historial"
+    },
+    "stepStatus": {
+      "done": "completat",
+      "current": "pas actual",
+      "upcoming": "no començat"
+    },
+    "signedInAs": "Sessió iniciada com a {{username}}",
+    "serverHint": "Aquest és el primer servidor que connecteu. Podeu afegir-ne més a Configuració.",
+    "ownerTitle": "Creeu el compte de propietari",
+    "ownerDescription": "El compte de propietari gestiona Tracearr i tots els servidors que connecteu.",
+    "ownerDescriptionSignIn": "Continueu amb {{server}} per crear el compte de propietari i connectar el servidor, o feu servir un nom d'usuari i una contrasenya.",
+    "plexWaitingDescription": "Acabeu d'iniciar la sessió a Plex a la finestra que s'ha obert.",
+    "pickerTitle": "Trieu el vostre servidor {{server}}",
+    "pickerDescription": "Sessió iniciada com a {{username}}.",
+    "connectHint": "Tracearr llegeix l'activitat d'aquest servidor.",
+    "connectedTitle": "{{name}} està connectat",
+    "connectedDescription": "Tracearr està llegint l'activitat d'aquest servidor.",
+    "importTitle": "Importeu l'historial de visualització",
+    "importDescription": "Importeu les reproduccions de quan Tracearr encara no supervisava el servidor. Les importacions s'executen en segon pla, així que podeu sortir un cop n'hagi començat una.",
+    "goToDashboard": "Ves al tauler de control",
+    "codeExpired": "El codi d'inici de sessió ha caducat.",
+    "signInAgain": "Torna a iniciar la sessió",
+    "timedOut": "S'ha esgotat el temps d'espera de l'inici de sessió a {{server}}",
+    "checkAgain": "Torna-ho a comprovar"
+  },
+  "tofa": {
+    "signIn": "Inicia la sessió amb tofa",
+    "waiting": "S'està esperant que aproveu Tracearr a tofa",
+    "waitingHint": "Inicieu la sessió a tofa a la finestra que s'ha obert i trieu Approve.",
+    "waitingDescription": "Un cop ho hàgiu aprovat, triareu el servidor i Tracearr crearà el compte de propietari.",
+    "openAgain": "Torna a obrir tofa",
+    "expiresIn": "Caduca d'aquí a {{time}}",
+    "codeFallback": "Si tofa us demana un codi, introduïu <code>{{code}}</code>.",
+    "pickerNote": "Només es mostren els servidors dels quals sou propietari. Tracearr crea la seva pròpia clau d'API, que pot llegir l'activitat i aturar transmissions.",
+    "unreachable": "Tracearr no pot accedir a {{name}} a {{address}}.",
+    "noAddress": "tofa no indica cap adreça local per a {{name}}.",
+    "noServersTitle": "No hi ha cap servidor de tofa per connectar",
+    "noServers": "{{username}} no és propietari de cap servidor de tofa. Només el propietari d'un servidor el pot connectar.",
+    "noServersPassword": "{{username}} no és propietari de cap servidor de tofa, així que encara no hi ha res per connectar. Creeu el compte de propietari amb un nom d'usuari i una contrasenya.",
+    "manual": "Introdueix un URL i una clau d'API manualment"
+  },
   "dashboard": {
     "alerts": "Alertes",
     "plays": "Reproduccions",
@@ -66,6 +117,7 @@
     "noActiveStreams": "No hi ha cap transmissió activa",
     "streamsAppearHere": "Les transmissions actives apareixeran aquí quan els usuaris comencin a mirar contingut",
     "dayStreak": "Ratxa de dies",
+    "noServers": "Connecteu un servidor de Plex, Jellyfin, Emby o tofa per veure'n aquí les transmissions, l'historial i les biblioteques.",
     "view": {
       "label": "Vista de tauler",
       "admin": "Servidor",
@@ -168,6 +220,7 @@
     "mergeTitleBulk": "Voleu fusionar aquests usuaris?",
     "mergeReasonEmail": "Tots dos tenen el correu {{value}} als seus comptes de servidor.",
     "mergeReasonEmailUsername": "Tots dos utilitzen {{value}} com a nom d'usuari o correu del compte.",
+    "mergeReasonLinked": "Un dels servidors indica que el compte {{value}} de l'altre és d'aquesta persona.",
     "mergeReasonUsername": "Tots dos utilitzen el nom d'usuari {{value}}.",
     "mergeKeep": "Es manté",
     "mergeFoldIn": "S'incorpora i després s'elimina",
@@ -194,12 +247,14 @@
     "suggestionsTitle": "Possibles usuaris duplicats",
     "suggestionsPairEmail": "{{first}} i {{second}} comparteixen un correu",
     "suggestionsPairEmailUsername": "{{first}} i {{second}} utilitzen la mateixa adreça com a nom d'usuari o correu del compte",
+    "suggestionsPairLinked": "{{first}} i {{second}} estan enllaçats als seus servidors",
     "suggestionsPairUsername": "{{first}} i {{second}} comparteixen un nom d'usuari",
     "suggestionsSheetDescription": "En fusionar, es manté un usuari i s'elimina l'altre. Una parella marcada com que no és la mateixa persona deixa d'aparèixer fins que la restaureu.",
     "suggestionsReview": "Revisa",
     "suggestionsNotSame": "No són la mateixa persona",
     "suggestionsMatchEmail": "Mateix correu",
     "suggestionsMatchEmailUsername": "Tots dos utilitzen {{value}} com a nom d'usuari o correu del compte",
+    "suggestionsMatchLinked": "Compte enllaçat",
     "suggestionsMatchUsername": "Mateix nom d'usuari",
     "suggestionsEmpty": "No queda res per revisar.",
     "suggestionsDismissed": "Descartats ({{count}})",
@@ -232,6 +287,8 @@
     "suggestionsPairEmailMore_other": "{{first}} i {{second}} comparteixen un correu, i {{count}} més",
     "suggestionsPairEmailUsernameMore_one": "{{first}} i {{second}} utilitzen la mateixa adreça com a nom d'usuari o correu del compte, i {{count}} més",
     "suggestionsPairEmailUsernameMore_other": "{{first}} i {{second}} utilitzen la mateixa adreça com a nom d'usuari o correu del compte, i {{count}} més",
+    "suggestionsPairLinkedMore_one": "{{first}} i {{second}} estan enllaçats als seus servidors, i {{count}} més",
+    "suggestionsPairLinkedMore_other": "{{first}} i {{second}} estan enllaçats als seus servidors, i {{count}} més",
     "suggestionsPairUsernameMore_one": "{{first}} i {{second}} comparteixen un nom d'usuari, i {{count}} més",
     "suggestionsPairUsernameMore_other": "{{first}} i {{second}} comparteixen un nom d'usuari, i {{count}} més",
     "pendingLink_one": "{{count}} pendent",
@@ -377,6 +434,8 @@
     "stream": {
       "notAvailable": "N/D",
       "bitrateUnavailable": "Jellyfin i Emby no proporcionen les taxes de bits individuals de vídeo i d'àudio durant la transcodificació. Només hi ha disponible la taxa de bits total de la transmissió.",
+      "rebuffers": "Recàrregues de la memòria intermèdia",
+      "droppedFrames": "Fotogrames perduts",
       "stereo": "Estèreo",
       "mono": "Mono",
       "noDetails": "No hi ha informació detallada de la transmissió",
@@ -632,6 +691,10 @@
       "notSynced": {
         "title": "La biblioteca encara no està sincronitzada",
         "body": "Les estadístiques de la biblioteca apareixeran aquí quan s'hagi sincronitzat la biblioteca. Normalment això passa automàticament cada hora."
+      },
+      "syncQueued": {
+        "title": "Sincronització de la biblioteca en cua",
+        "body": "Hi ha una sincronització de la biblioteca en espera. Les estadístiques de la biblioteca apareixeran aquí quan acabi."
       },
       "noMedia": {
         "title": "Encara no hi ha pel·lícules ni sèries",
@@ -1307,7 +1370,7 @@
         "sessionPaused": "es posa en pausa una transmissió",
         "sessionHeldFor": "una transmissió ha estat en pausa durant {{duration}}",
         "sessionHeldForTotal": "una transmissió ha estat en pausa durant {{duration}} en total",
-        "sessionWatched": "",
+        "sessionWatched": "es considera vista una transmissió",
         "accountInactiveFor": "un compte fa {{duration}} que està inactiu",
         "accountNewDevice": "un compte reprodueix des d'un dispositiu nou",
         "accountTrustChanged": "canvia la puntuació de confiança d'un compte",
@@ -2078,8 +2141,8 @@
           "synonyms": "pausa, inactiu, abandonat, encallat, afk"
         },
         "sessionWatched": {
-          "description": "",
-          "synonyms": ""
+          "description": "Una transmissió supera el llindar per considerar-la vista que s'ha establert a Configuració per al seu tipus de contingut.",
+          "synonyms": "vist, acabat, completat, percentatge, progrés, llindar"
         },
         "accountInactiveFor": {
           "label": "Un compte queda inactiu",
@@ -2174,6 +2237,7 @@
   "terminateStream": {
     "title": "Finalitza la transmissió",
     "stopMedia": "Voleu aturar \"{{mediaTitle}}\" de @{{username}}?",
+    "stopMediaFor": "Voleu aturar \"{{mediaTitle}}\" de {{name}}?",
     "messageLabel": "Missatge per a l'usuari (opcional)",
     "messagePlaceholder": "p. ex., Si us plau, no comparteixis el teu compte",
     "messageHint": "Aquest missatge se li mostrarà durant la reproducció",
@@ -2888,7 +2952,7 @@
         "libraryAll": "Qualsevol biblioteca",
         "yearFromLabel": "Des de l'any",
         "yearToLabel": "Fins a l'any",
-        "addedLabel": "",
+        "addedLabel": "Afegit",
         "sizeGbMinLabel": "Mida mínima (GB)",
         "sizeGbMaxLabel": "Mida màxima (GB)",
         "sizeChipAtLeast": "≥ {{min}} GB",

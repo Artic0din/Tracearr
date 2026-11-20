@@ -15,7 +15,8 @@ vi.mock('../../db/client.js', () => ({
   createRawPgClient: () => ({ connect: vi.fn(), query: vi.fn(), end: vi.fn(async () => {}) }),
 }));
 vi.mock('../mediaServer/index.js', () => ({
-  createMediaServerClient: () => ({ getUsers: mockGetUsers, getLibraries: mockGetLibraries }),
+  createMediaServerClient: () =>
+    fakeJellyfinClient({ getUsers: mockGetUsers, getLibraries: mockGetLibraries }),
   PlexClient: class {},
 }));
 vi.mock('../userService.js', () => ({
@@ -31,6 +32,8 @@ import { revokeSessionsForServerUsers } from '../../lib/revoke.js';
 import { clearScope } from '../../lib/scope.js';
 import { syncUserFromMediaServer } from '../userService.js';
 import { syncServer } from '../sync.js';
+import { fakeJellyfinClient } from '../../test/mediaServerFakes.js';
+import { HttpClientError, isHttpStatus } from '../../utils/http.js';
 
 const SERVER = {
   id: 'srv-1',
@@ -41,8 +44,8 @@ const SERVER = {
   historicalAt: null,
 };
 
-function synced(id: string, newlyDisabled: boolean) {
-  return { serverUser: { id }, user: {}, created: false, newlyDisabled } as never;
+function synced(id: string, lostAccess: boolean) {
+  return { serverUser: { id }, user: {}, created: false, lostAccess } as never;
 }
 
 describe('syncServer revocation', () => {
@@ -146,5 +149,40 @@ describe('syncServer library access', () => {
     expect(
       vi.mocked(syncUserFromMediaServer).mock.calls.map(([, user]) => user.sharedLibraries)
     ).toEqual([[], undefined]);
+  });
+
+  it.each([
+    [401, true],
+    [403, true],
+    [500, false],
+  ])('keeps the status of a Plex server answering %i to the user sync', async (status, refused) => {
+    mockLimit.mockResolvedValue([{ ...SERVER, type: 'plex', url: 'http://plex.local:32400' }]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status })));
+
+    const result = await syncServer('srv-1', { syncUsers: true, syncLibraries: false });
+    vi.unstubAllGlobals();
+
+    expect(result.usersRead).toBe(false);
+    expect(result.usersError).toBeInstanceOf(HttpClientError);
+    expect(isHttpStatus(result.usersError, 401, 403)).toBe(refused);
+    expect(result.errors).toEqual([
+      expect.stringMatching(
+        new RegExp(`^Plex user sync failed: Plex server request failed: ${status}`)
+      ),
+    ]);
+  });
+
+  it('keeps the error that stopped the user list from being read', async () => {
+    const refused = new Error('jellyfin request failed: 401 Unauthorized');
+    mockGetUsers.mockRejectedValue(refused);
+    mockGetLibraries.mockResolvedValue([]);
+
+    const result = await syncServer('srv-1', { syncUsers: true, syncLibraries: false });
+
+    expect(result).toMatchObject({
+      usersRead: false,
+      usersError: refused,
+      errors: ['Jellyfin user sync failed: jellyfin request failed: 401 Unauthorized'],
+    });
   });
 });

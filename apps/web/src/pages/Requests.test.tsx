@@ -71,6 +71,7 @@ const outcomeRow: RequestOutcomeRow = {
     username: 'alice',
     identityName: 'Alice',
     thumb: null,
+    thumbServerId: null,
   },
 };
 
@@ -173,9 +174,9 @@ describe('Requests page', () => {
     render(page());
 
     expect(screen.getByText('12')).toBeInTheDocument();
-    expect(screen.getByText('(requests.page.kpi.landedOf:{"count":8})')).toBeInTheDocument();
+    expect(screen.getByText('requests.page.kpi.landedOf:{"count":8}')).toBeInTheDocument();
     expect(screen.getByText('6')).toBeInTheDocument();
-    expect(screen.getByText('(requests.page.kpi.ofLanded:{"share":"75%"})')).toBeInTheDocument();
+    expect(screen.getByText('requests.page.kpi.ofLanded:{"share":"75%"}')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(
       within(screen.getByTestId('request-funnel'))
