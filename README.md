@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Real-time monitoring for Plex, Jellyfin, and Emby. One dashboard for all your servers.</strong>
+  <strong>Real-time monitoring for Plex, Jellyfin, Emby, tofa, and Silo. One dashboard for all your servers.</strong>
 </p>
 
 <p align="center">
@@ -21,13 +21,13 @@
 
 ---
 
-Tracearr is a monitoring platform for **Plex**, **Jellyfin**, and **Emby**. Track streams in real-time, dig into playback analytics, browse one catalog across every server, and spot account sharing before it gets out of hand.
+Tracearr is a monitoring platform for **Plex**, **Jellyfin**, **Emby**, **tofa**, and **Silo**. Track streams in real-time, dig into playback analytics, browse one catalog across every server, and spot account sharing before it gets out of hand.
 
 Screenshots and the feature tour are at [tracearr.com](https://tracearr.com), the manual at [docs.tracearr.com](https://docs.tracearr.com). Both are updated with every release. This file is the short version.
 
 ## What It Does
 
-**Multi-Server Dashboard** - Connect Plex, Jellyfin, and Emby to a single interface. Active streams, server health, and per-server CPU, memory, and bandwidth charts sit on one page. Plex reports its own numbers; Jellyfin and Emby report theirs through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE).
+**Multi-Server Dashboard** - Connect Plex, Jellyfin, Emby, tofa, and Silo to a single interface. Active streams, server health, and per-server CPU, memory, and bandwidth charts sit on one page. Plex reports its own numbers; Jellyfin and Emby report theirs through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE); tofa reports CPU and memory from its own metrics endpoint. Silo reports no host stats, so a Silo server shows streams but no CPU or memory chart.
 
 **Session Tracking** - Complete session history: who watched what, when, where, and on what device. Every stream includes geolocation data with ASN, continent, and postal code.
 
@@ -60,13 +60,13 @@ Screenshots and the feature tour are at [tracearr.com](https://tracearr.com), th
 
 **Bulk Actions** - Multi-select operations across tables. Acknowledge or dismiss violations in bulk, reset trust scores, delete session history.
 
-**Data Import** - Bring history with you: Tautulli, a Jellystat backup file, or the Playback Reporting plugin read straight from Jellyfin or Emby.
+**Data Import** - Bring history with you: Tautulli, a Jellystat backup file, the Playback Reporting plugin read straight from Jellyfin or Emby, or the watch history tofa keeps itself. Silo history import isn't supported yet.
 
 ## Why Tracearr?
 
 Tautulli only works with Plex. Jellystat only works with Jellyfin and Emby. If you run multiple servers, you're stuck with multiple dashboards.
 
-Tracearr handles all three. One install, one interface.
+Tracearr handles all of them, plus tofa and Silo. One install, one interface.
 
 |                                | Tautulli | Jellystat | Tracearr |
 | ------------------------------ | -------- | --------- | -------- |
@@ -81,6 +81,8 @@ Tracearr handles all three. One install, one interface.
 | Plex support                   | ✅       | ❌        | ✅       |
 | Jellyfin support               | ❌       | ✅        | ✅       |
 | Emby support                   | ❌       | ✅        | ✅       |
+| tofa support                   | ❌       | ❌        | ✅       |
+| Silo support                   | ❌       | ❌        | ✅       |
 | Multi-server dashboard         | ❌       | ❌        | ✅       |
 | Cross-server user identities   | ❌       | ❌        | ✅       |
 | Cross-server media catalog     | ❌       | ❌        | ✅       |
@@ -106,7 +108,7 @@ echo "COOKIE_SECRET=$(openssl rand -hex 32)" >> .env
 docker compose -f docker-compose.pg18.yml up -d
 ```
 
-Open `http://localhost:3000` and connect your Plex, Jellyfin, or Emby server.
+Open `http://localhost:3000` and connect your Plex, Jellyfin, Emby, tofa, or Silo server. Only the owner can add a Silo server, with a Silo administrator API key.
 
 **Unraid users:** The supervised image bundles the app, TimescaleDB, and Redis in one container and generates its own secrets on first boot. See [docker/examples](docker/examples/README.md) for details.
 
@@ -208,7 +210,7 @@ Frontend runs at `localhost:5173`, API at `localhost:3000`.
 
 **MapLibre with a bundled PMTiles basemap** replaces the old raster tiles. The archive is a zoom 8 extract of the Protomaps planet build, made at image build time by `scripts/fetch-basemap.sh`, and ships in the image, so the map works on an instance with no outbound internet access.
 
-**SSE for instant sessions** - Plex streams session updates in real-time via Server-Sent Events, so streams appear the moment they start. Jellyfin and Emby get the same through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE); without it they fall back to polling.
+**SSE for instant sessions** - Plex streams session updates in real-time via Server-Sent Events, so streams appear the moment they start. Jellyfin and Emby get the same through the [Tracearr SSE plugin](https://github.com/Tracearr/Media-Server-SSE); without it they fall back to polling. tofa and Silo send live events over their own socket and are polled only while it is down. Silo's socket needs an API key with the `admin:monitor:read` scope; without it Tracearr polls Silo.
 
 ## Project Structure
 
@@ -253,7 +255,7 @@ Run `pnpm dev` in a terminal to start both apps, then use the "Debug All" config
 
 **Shipped**
 
-- [x] Multi-server Plex, Jellyfin, and Emby support
+- [x] Multi-server Plex, Jellyfin, Emby, tofa, and Silo support
 - [x] Session tracking with full history
 - [x] Automations: triggers, conditions, actions, and 22 built-in templates
 - [x] Share codes for exporting and importing an automation
@@ -262,11 +264,11 @@ Run `pnpm dev` in a terminal to start both apps, then use the "Debug All" config
 - [x] Cross-server identities with merge, split, and worst-account trust
 - [x] Media catalog: overview, browse, genres, quality, storage, watch
 - [x] Real-time WebSocket updates
-- [x] SSE for instant session detection (Plex built-in, Jellyfin/Emby via plugin)
+- [x] SSE for instant session detection (Plex built-in, Jellyfin/Emby via plugin, tofa and Silo over their own socket)
 - [x] Live server CPU, memory, and bandwidth charts
 - [x] Self-hosted stream map (MapLibre + PMTiles, no tile keys)
 - [x] Trust scores
-- [x] Tautulli, Jellystat, and Playback Reporting history import
+- [x] Tautulli, Jellystat, Playback Reporting, and tofa history import
 - [x] Transcode analytics & device compatibility
 - [x] Live TV & music tracking
 - [x] Stream quality metrics (codec, resolution, bitrate)
@@ -308,7 +310,7 @@ This product includes GeoLite2 data created by MaxMind, available from https://w
 ---
 
 <p align="center">
-  <sub>For Plex, Jellyfin, and Emby admins who want to see what's actually happening.</sub>
+  <sub>For Plex, Jellyfin, Emby, tofa, and Silo admins who want to see what's actually happening.</sub>
 </p>
 
 This project is tested with BrowserStack.
