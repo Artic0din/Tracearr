@@ -86,6 +86,27 @@ vi.mock('../mediaServer/tofa/eventSource.js', () => ({
   }),
 }));
 
+vi.mock('../mediaServer/silo/eventSource.js', () => ({
+  SiloEventSource: vi.fn(function () {
+    return {
+      on: vi.fn(),
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+      removeAllListeners: vi.fn(),
+      retryFromFallback: vi.fn(),
+      getStatus: vi.fn().mockReturnValue({
+        serverId: 'silo-1',
+        serverName: 'Silo Server',
+        state: 'connected',
+        connectedAt: new Date('2026-01-01T00:00:00Z'),
+        lastEventAt: null,
+        reconnectAttempts: 0,
+        error: null,
+      }),
+    };
+  }),
+}));
+
 vi.mock('../serviceTracker.js', () => ({
   registerService: vi.fn(),
   unregisterService: vi.fn(),
@@ -98,6 +119,7 @@ vi.mock('../leaderLease.js', () => ({
 import { SSEManager } from '../sseManager.js';
 import { PlexEventSource } from '../mediaServer/plex/eventSource.js';
 import { TofaEventSource } from '../mediaServer/tofa/eventSource.js';
+import { SiloEventSource } from '../mediaServer/silo/eventSource.js';
 import { enqueueLibrarySyncForChange } from '../../jobs/librarySyncQueue.js';
 import { triggerServerPoll } from '../../jobs/poller/index.js';
 import type { CacheService, PubSubService } from '../cache.js';
@@ -562,5 +584,27 @@ describe('SSEManager.refresh', () => {
     await manager.refresh();
 
     expect((manager as unknown as PrivateManagerInternals).connections.has('plex-1')).toBe(false);
+  });
+
+  it('connects a Silo server via SiloEventSource without flagging plugin updates', async () => {
+    const cache = makeCacheService();
+    await manager.initialize(cache, makePubSubService());
+    manager.setLatestPluginVersion('1.0.0');
+
+    await manager.addServer('silo-1', 'Silo Server', 'silo', 'http://silo.local:8091', 'sa_key');
+
+    expect(SiloEventSource).toHaveBeenCalledTimes(1);
+    (manager as unknown as PrivateManager).refreshConnectionStatuses();
+
+    expect(cache.setServerConnectionStatus).toHaveBeenCalledWith(
+      'silo-1',
+      expect.objectContaining({
+        serverId: 'silo-1',
+        serverType: 'silo',
+        mode: 'realtime',
+        state: 'connected',
+        pluginUpdateAvailable: false,
+      })
+    );
   });
 });

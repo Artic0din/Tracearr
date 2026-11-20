@@ -1,4 +1,5 @@
-import { type SQL, between, eq, gte, inArray, sql } from 'drizzle-orm';
+import { type SQL, and, between, eq, gte, inArray, sql } from 'drizzle-orm';
+import type { db as DbClient } from '../client.js';
 import { sessions } from '../schema.js';
 
 type SessionRowRef = { id: string; startedAt: Date | number | string };
@@ -89,4 +90,27 @@ export function storedSessionRowById(row: SessionRowRef): SQL {
   const at = new Date(row.startedAt).getTime();
   const window = between(sessions.startedAt, new Date(at - 60_000), new Date(at + 60_000));
   return sql`(${eq(sessions.id, row.id)} and ${window})`;
+}
+
+/**
+ * Check whether a recent session on a server references a given poster URL.
+ * Bounded by activeSessionFloor() so TimescaleDB prunes older compressed chunks.
+ */
+export async function hasRecentSessionThumbPath(
+  database: typeof DbClient,
+  serverId: string,
+  thumbPath: string
+): Promise<boolean> {
+  const [row] = await database
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.serverId, serverId),
+        eq(sessions.thumbPath, thumbPath),
+        gte(sessions.startedAt, activeSessionFloor())
+      )
+    )
+    .limit(1);
+  return Boolean(row);
 }

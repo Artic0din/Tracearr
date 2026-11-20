@@ -19,11 +19,13 @@ import {
   assertNever,
   isDirectAvatarUrl,
   isProxiableAvatarUrl,
+  isPubliclyRoutableUrl,
   type RequestServiceType,
   type ServerType,
 } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers, libraryItems, mediaRequests, requestServices } from '../db/schema.js';
+import { hasRecentSessionThumbPath } from '../db/sessions/index.js';
 import { assertSafeProbeUrl, SsrfBlockedError } from '../utils/ssrf.js';
 import { cacheWriteAllowed, noteCacheWrite } from './imageCacheGuard.js';
 import { mediaBrowserTokenHeader } from './mediaServer/shared/baseMediaServerClient.js';
@@ -400,8 +402,9 @@ const IMAGE_PATH_ALLOWLIST: Record<ServerType, RegExp> = {
   // An artwork path, or the image cache path it redirects to with the size it was asked for,
   // or one of the avatars bundled with the server
   tofa: /^\/(api\/v1\/artwork\/[0-9a-f-]+\/poster|api\/v1\/profiles\/avatars\/[\w-]+\.png|cache\/images\/[a-z]+\/[^/?#]+(\?[wh]=\d+)?)$/,
-  // Silo artwork is a signed link; the signature expires, so old history posters fall back.
-  silo: /^\/api\/v2\/artwork\/[\w./-]+\?exp=\d+&sig=[^&#]+$/,
+  // Silo poster URLs are signed links to either cached /api/v2/artwork/... or
+  // uncached /api/v2/item-posters/{content_id}; signatures expire, so old posters fall back.
+  silo: /^\/api\/v2\/(?:artwork\/[\w./:-]+|item-posters\/[^/?#]+)\?exp=\d+&sig=[^&#]+$/,
 };
 
 /** A guide image on a host the server's guide links art from, as an https address; null for anything else */
@@ -420,6 +423,92 @@ function guideImageUrl(server: ServerRow, imagePath: string): string | null {
 interface UpstreamRequest {
   imageUrl: string;
   headers: Record<string, string>;
+}
+
+function assertSafeSiloDirectUrl(rawUrl: string): URL {
+  if (rawUrl.includes('\\') || rawUrl.includes('\0')) {
+    throw new SsrfBlockedError(`Silo direct image URL contains illegal characters: ${rawUrl}`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new SsrfBlockedError(`Malformed Silo direct image URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new SsrfBlockedError(`Silo direct image URL must use https: ${parsed.protocol}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new SsrfBlockedError('Silo direct image URL must not contain credentials');
+  }
+  assertSafeProbeUrl(parsed.toString());
+  if (!isPubliclyRoutableUrl(parsed.toString())) {
+    throw new SsrfBlockedError(
+      `Silo direct image URL is not publicly routable: ${parsed.hostname}`
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Validate a 302 redirect `Location` returned by Silo's `/api/v2/item-posters/{content_id}`.
+ * Silo redirects either to a same-origin signed `/api/v2/artwork/...` route or to a public
+ * HTTPS S3/CDN direct artwork URL. Never forwards auth headers.
+ */
+export function resolveSiloRedirectTarget(serverUrl: string, location: string): string {
+  const baseUrl = serverUrl.replace(/\/$/, '');
+  const trimmed = location.trim();
+  if (!trimmed) {
+    throw new SsrfBlockedError('Empty redirect location from Silo');
+  }
+
+  // Relative same-origin redirect (e.g. /api/v2/artwork/...?exp=...&sig=...)
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+    assertCanonicalImagePath(baseUrl, trimmed);
+    assertSafeProbeUrl(baseUrl);
+    if (!IMAGE_PATH_ALLOWLIST.silo.test(trimmed)) {
+      throw new SsrfBlockedError(`Silo redirect path not allowlisted: ${trimmed}`);
+    }
+    return `${baseUrl}${trimmed}`;
+  }
+
+  // Absolute URL: check if same-origin as the Silo server first, else require public HTTPS
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new SsrfBlockedError(`Malformed Silo redirect location: ${trimmed}`);
+  }
+  const base = new URL(baseUrl);
+  if (parsed.origin === base.origin) {
+    const basePrefix = base.pathname.replace(/\/$/, '');
+    const fullPath = `${parsed.pathname}${parsed.search}`;
+    const relPath =
+      basePrefix && fullPath.startsWith(basePrefix) ? fullPath.slice(basePrefix.length) : fullPath;
+    assertCanonicalImagePath(baseUrl, relPath);
+    assertSafeProbeUrl(baseUrl);
+    if (!IMAGE_PATH_ALLOWLIST.silo.test(relPath)) {
+      throw new SsrfBlockedError(`Silo same-origin redirect path not allowlisted: ${relPath}`);
+    }
+    return `${baseUrl}${relPath}`;
+  }
+
+  return assertSafeSiloDirectUrl(parsed.toString()).toString();
+}
+
+async function isKnownSiloDirectPoster(serverId: string, imagePath: string): Promise<boolean> {
+  try {
+    const [item] = await db
+      .select({ id: libraryItems.id })
+      .from(libraryItems)
+      .where(and(eq(libraryItems.serverId, serverId), eq(libraryItems.thumbPath, imagePath)))
+      .limit(1);
+    if (item) return true;
+
+    return await hasRecentSessionThumbPath(db, serverId, imagePath);
+  } catch {
+    return false;
+  }
 }
 
 export function buildUpstreamRequest(
@@ -554,6 +643,16 @@ async function fetchUpstreamImage(
   const location = response.headers.get('location');
   const redirected = response.status >= 300 && response.status < 400;
   const onServer = new URL(imageUrl).origin === new URL(server.url).origin;
+
+  if (server.type === 'silo' && redirected && onServer) {
+    await response.body?.cancel().catch(() => undefined);
+    if (!location) {
+      throw new Error(`HTTP ${response.status} without Location header`);
+    }
+    const redirectUrl = resolveSiloRedirectTarget(server.url, location);
+    return fetch(redirectUrl, { ...init, headers: { Accept: 'image/*' } });
+  }
+
   if (!redirected || !location || !onServer || !followsImageRedirect(server.type)) return response;
 
   const target = new URL(location, imageUrl);
@@ -723,7 +822,23 @@ async function runMissPipeline(args: MissPipelineArgs): Promise<ProxyResult> {
   try {
     // Inside the try so a blocked path degrades to the fallback image like any
     // other upstream failure, instead of escaping as a 500.
-    const candidates = upstreamRequests(origin, imagePath, { width, height }, resizedOnly);
+    let candidates: UpstreamRequest[];
+    if (
+      origin.kind === 'server' &&
+      origin.server.type === 'silo' &&
+      imagePath.startsWith('https://')
+    ) {
+      // Silo S3/CDN direct delivery returns absolute https:// URLs. Only proxy
+      // them when the exact URL was stored by Tracearr for this Silo server
+      // (preventing unauthenticated SSRF) and passes public-HTTPS checks.
+      const safeUrl = assertSafeSiloDirectUrl(imagePath).toString();
+      if (!(await isKnownSiloDirectPoster(serverId, imagePath))) {
+        throw new SsrfBlockedError(`Unrecognized Silo direct image URL: ${imagePath}`);
+      }
+      candidates = [{ imageUrl: safeUrl, headers: { Accept: 'image/*' } }];
+    } else {
+      candidates = upstreamRequests(origin, imagePath, { width, height }, resizedOnly);
+    }
     let imageBuffer: Buffer | null = null;
     let lastError: unknown = null;
     for (const candidate of candidates) {

@@ -142,11 +142,12 @@ describe('sharesKnownUsers', () => {
     expect(await sharesKnownUsers(target)).toBe(false);
   });
 
-  it('asks nothing of the server when Tracearr holds no users for it, or it is Plex', async () => {
+  it('asks nothing of the server when Tracearr holds no users for it, or it is Plex or Silo', async () => {
     selectWhere.mockResolvedValueOnce([]);
     expect(await sharesKnownUsers(target)).toBe(false);
 
     expect(await sharesKnownUsers({ ...target, type: 'plex' })).toBe(false);
+    expect(await sharesKnownUsers({ ...target, type: 'silo' })).toBe(false);
     expect(getUsers).not.toHaveBeenCalled();
   });
 });

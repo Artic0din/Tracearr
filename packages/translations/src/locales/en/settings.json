@@ -185,7 +185,7 @@
     "apiKeyHelpJellyfin": "Find this in Jellyfin Dashboard → API Keys",
     "apiKeyHelpEmby": "Find this in Emby Server → API Keys",
     "apiKeyHelpTofa": "Create one in tofa under Settings → API. \"Read only, can stop streams\" covers everything Tracearr does; \"Full admin\" works too, and \"Read only\" works but cannot stop streams.",
-    "apiKeyHelpSilo": "An API key owned by a Silo administrator (starts with sa_)",
+    "apiKeyHelpSilo": "An administrator API key (starts with sa_). Include the admin:monitor:read scope for real-time updates.",
     "cannotStopStreams": "This API key cannot stop streams. A \"Read only, can stop streams\" key can.",
     "noSignIn": "Not available: {{server}} has no sign-in Tracearr can call",
     "apiKeyKeepCurrent": "Leave blank to keep the current key",

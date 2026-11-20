@@ -46,6 +46,7 @@ async function serverRow(serverId: string): Promise<ServerLinkRow | null> {
   return row ?? null;
 }
 
+
 /**
  * A season carries no IMDb or TMDB id of its own - only the show does - so a season links
  * to Tracearr and the media server and nothing else.

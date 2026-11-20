@@ -44,6 +44,11 @@ import {
 } from './mediaServer/shared/jellyfinEmbyEventSource.js';
 import { TofaEventSource } from './mediaServer/tofa/eventSource.js';
 import type { TofaStreamEvent } from './mediaServer/tofa/types.js';
+import {
+  SiloEventSource,
+  type SiloSessionEvent,
+  type SiloLibraryEvent,
+} from './mediaServer/silo/eventSource.js';
 import { recordServerStatsSample } from './serverLiveStats.js';
 import { pollServerDownloads } from './downloads/activityLogPoll.js';
 import { deliveredFromTranscode } from './downloads/enrich.js';
@@ -90,7 +95,12 @@ interface ServerConnection {
   // Kept for the plugin-list probe when the SSE endpoint 404s
   url: string;
   token: string;
-  eventSource: PlexEventSource | JellyfinEmbyEventSource | TofaEventSource | null;
+  eventSource:
+    | PlexEventSource
+    | JellyfinEmbyEventSource
+    | TofaEventSource
+    | SiloEventSource
+    | null;
   state: SSEConnectionState;
   inFallback: boolean;
   connectedAt: Date | null;
@@ -278,6 +288,10 @@ export class SSEManager extends EventEmitter {
         pluginIssue: null,
       };
 
+      // Track the connection before connect() so synchronous/early state transitions
+      // (e.g. Silo 403 -> unsupported during ticket mint) update connection state cleanly.
+      this.connections.set(serverId, connection);
+
       try {
         switch (serverType) {
           case 'plex': {
@@ -316,23 +330,25 @@ export class SSEManager extends EventEmitter {
             await eventSource.connect();
             break;
           }
-          case 'silo':
-            return;
+          case 'silo': {
+            const eventSource = new SiloEventSource({ serverId, serverName, url, token });
+
+            this.setupSiloEventHandlers(eventSource, serverId, serverName);
+            connection.eventSource = eventSource;
+            await eventSource.connect();
+            break;
+          }
           default:
             assertNever(serverType);
         }
       } catch (error) {
-        // connect() threw before the connection was tracked in this.connections,
-        // so removeServerInternal's cleanup path never sees it. Tear down the
-        // listeners and any partial connection here instead of leaking them.
+        this.connections.delete(serverId);
         if (connection.eventSource) {
           connection.eventSource.removeAllListeners();
           connection.eventSource.disconnect();
         }
         throw error;
       }
-
-      this.connections.set(serverId, connection);
     } finally {
       this.pendingOperations.delete(serverId);
     }
@@ -689,6 +705,36 @@ export class SSEManager extends EventEmitter {
   }
 
   /**
+   * Set up event handlers for a SiloEventSource (native v2 WebSocket)
+   */
+  private setupSiloEventHandlers(
+    eventSource: SiloEventSource,
+    serverId: string,
+    serverName: string
+  ): void {
+    eventSource.on('session:event', (_event: SiloSessionEvent) => {
+      const connection = this.connections.get(serverId);
+      if (connection) connection.lastEventAt = new Date();
+      // Trigger-poll approach: event arrived -> run existing poller pipeline for this server
+      scheduleServerPoll(serverId, serverName);
+    });
+
+    eventSource.on('library:event', ({ type, itemId }: SiloLibraryEvent) => {
+      const connection = this.connections.get(serverId);
+      if (connection) connection.lastEventAt = new Date();
+      recordLibraryEvent({ serverId, serverName, type, itemId });
+    });
+
+    eventSource.on('connection:state', (state: SSEConnectionState) => {
+      this.handleConnectionStateChange(serverId, serverName, state, eventSource.getStatus());
+    });
+
+    eventSource.on('connection:error', (error: Error) => {
+      console.error(`[SSEManager] Silo WebSocket error for ${serverName}:`, error.message);
+    });
+  }
+
+  /**
    * Set up event handlers for a JellyfinEmbyEventSource
    */
   private setupJellyfinEmbyEventHandlers(
@@ -744,7 +790,7 @@ export class SSEManager extends EventEmitter {
         }
       }
 
-      this.publishJellyfinEmbyStatus(serverId, serverName, serverType, status);
+      this.publishConnectionStatus(serverId, serverName, serverType, status);
     });
 
     eventSource.on('connection:error', (error: Error) => {
@@ -752,10 +798,10 @@ export class SSEManager extends EventEmitter {
     });
   }
 
-  private publishJellyfinEmbyStatus(
+  private publishConnectionStatus(
     serverId: string,
     serverName: string,
-    serverType: JellyfinEmbyServerType,
+    serverType: JellyfinEmbyServerType | 'silo',
     status: SSEConnectionStatus
   ): void {
     const connectionStatus = this.buildConnectionStatus(serverId, serverName, serverType, status);
@@ -795,7 +841,7 @@ export class SSEManager extends EventEmitter {
         if (!current?.eventSource || current.state !== 'unsupported') return;
         current.pluginIssue = issue;
         console.log(`[SSEManager] Plugin diagnosis for ${current.serverName}: ${issue}`);
-        this.publishJellyfinEmbyStatus(
+        this.publishConnectionStatus(
           serverId,
           current.serverName,
           serverType,
@@ -845,6 +891,7 @@ export class SSEManager extends EventEmitter {
     switch (liveEvents) {
       case 'plexWebsocket':
       case 'tofaSocket':
+      case 'siloSocket':
         // Also emit the legacy SSEConnectionStatus event
         this.emit('connection:status', status);
         if (this.cacheService) {
